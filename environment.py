@@ -94,7 +94,17 @@ class SpaceEnvironment(gym.Env):
                 'rotation_blend': 0.0,       # Smoothed rotation command choice (0-4 for rotational_torque_action)
                 'rotation_timer': 0,         # Timer for minimum rotation duration
                 'target_rotation_action': 0, # The target rotational action (0-4) being ramped/maintained
-                'current_rotation_ramp': 0.0 # Current ramped "intensity" of rotation (0 to target_rotation_action's implied level)
+                'current_rotation_ramp': 0.0, # Current ramped "intensity" of rotation (0 to target_rotation_action's implied level)
+                
+                # For multi-stage smoothing
+                'secondary_linear_blend': 0.0,
+                'secondary_rotation_blend': 0.0,
+
+                # For anti-spam measures
+                'action_switches_recent': 0,
+                'last_effective_linear': 0,
+                'last_effective_rotation': 0,
+                'startup_energy_debt': 0.0
             }
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
@@ -263,15 +273,20 @@ class SpaceEnvironment(gym.Env):
 
         smoothing_state = probe['action_smoothing_state']
 
-        # --- ACTION SMOOTHING FOR LINEAR THRUST ---
-        # Determine input for linear smoothing (0 if low power)
+        # --- MULTI-STAGE ACTION SMOOTHING FOR LINEAR THRUST ---
+        # First stage (existing, now primary blend)
         input_linear_action = 0 if is_low_power else raw_linear_thrust_action
-        
         smoothing_state['linear_blend'] = (
             ACTION_SMOOTHING_FACTOR * smoothing_state['linear_blend'] +
             (1 - ACTION_SMOOTHING_FACTOR) * input_linear_action
         )
-        effective_linear_action = int(round(smoothing_state['linear_blend']))
+
+        # Second stage for ultra-smoothness
+        smoothing_state['secondary_linear_blend'] = (
+            0.9 * smoothing_state['secondary_linear_blend'] +
+            0.1 * smoothing_state['linear_blend']
+        )
+        effective_linear_action = int(round(smoothing_state['secondary_linear_blend']))
 
         # --- LINEAR THRUST DURATION & RAMPING ---
         # Manage thrust timer and target power
@@ -333,14 +348,56 @@ class SpaceEnvironment(gym.Env):
             probe['thrust_power_visual'] = 0
 
 
-        # --- ROTATIONAL TORQUE DURATION & RAMPING ---
+        # --- MULTI-STAGE ACTION SMOOTHING FOR ROTATIONAL TORQUE ---
         input_rotational_action = 0 if is_low_power else raw_rotational_torque_action
         smoothing_state['rotation_blend'] = (
             ROTATION_SMOOTHING_FACTOR * smoothing_state['rotation_blend'] +
             (1 - ROTATION_SMOOTHING_FACTOR) * input_rotational_action
         )
-        effective_rotation_action = int(round(smoothing_state['rotation_blend'])) # This is 0-4
+        
+        # Second stage for ultra-smoothness
+        smoothing_state['secondary_rotation_blend'] = (
+            0.95 * smoothing_state['secondary_rotation_blend'] +
+            0.05 * smoothing_state['rotation_blend']
+        )
+        effective_rotation_action = int(round(smoothing_state['secondary_rotation_blend'])) # This is 0-4
 
+        # --- THRUSTER ANTI-SPAM MEASURES ---
+        # Detect and penalize rapid action switching
+        # Note: effective_linear_action was defined earlier in the multi-stage linear smoothing
+        if effective_linear_action != smoothing_state.get('last_effective_linear', 0):
+            smoothing_state['action_switches_recent'] += 1
+            # Only apply startup cost if the thruster is actually trying to engage (action > 0)
+            if effective_linear_action > 0:
+                 smoothing_state['startup_energy_debt'] += THRUSTER_STARTUP_ENERGY_COST
+            
+        if effective_rotation_action != smoothing_state.get('last_effective_rotation', 0):
+            smoothing_state['action_switches_recent'] += 1
+            # Rotational startup cost could also be added if desired, similar to linear
+
+        # Apply switching penalty
+        # Consider if SWITCHING_DETECTION_WINDOW should be used here to average switches over time
+        if smoothing_state['action_switches_recent'] > 3:  # More than 3 switches recently (adjust threshold as needed)
+            penalty = RAPID_SWITCHING_PENALTY * (smoothing_state['action_switches_recent'] - 3) # Penalize excess switches
+            reward -= penalty
+            probe['energy'] = max(0, probe['energy'] - penalty * 0.5) # Penalize energy too
+
+        # Decay switching counter (e.g., per step or over SWITCHING_DETECTION_WINDOW)
+        # For per-step decay:
+        smoothing_state['action_switches_recent'] = max(0, smoothing_state['action_switches_recent'] - (1.0 / SWITCHING_DETECTION_WINDOW))
+
+
+        # Apply startup energy debt
+        if smoothing_state['startup_energy_debt'] > 0:
+            debt_payment = min(smoothing_state['startup_energy_debt'], THRUSTER_STARTUP_ENERGY_COST * 0.1) # Pay small portion each step
+            probe['energy'] = max(0, probe['energy'] - debt_payment)
+            smoothing_state['startup_energy_debt'] -= debt_payment
+            reward -= debt_payment * 0.01 # Small reward penalty for paying debt
+
+        # Update last actions
+        smoothing_state['last_effective_linear'] = effective_linear_action
+        smoothing_state['last_effective_rotation'] = effective_rotation_action
+        
         # Manage rotation timer and target action
         if effective_rotation_action > 0 and not is_low_power: # Action 0 is no torque
             if smoothing_state['rotation_timer'] <= 0: # Start new rotation
@@ -518,34 +575,53 @@ class SpaceEnvironment(gym.Env):
         return reward
     
     def _update_physics(self):
-        """Enhanced physics with stability and smoothing"""
+        """Ultra-smooth physics with enhanced stability"""
         for probe_id, probe in self.probes.items():
-            if not probe['alive']: # Skip updates for non-alive probes
+            if not probe['alive']:
                 continue
 
-            # Update rotational physics (with slight damping for stability)
-            probe['angle'] = (probe['angle'] + probe['angular_velocity']) % (2 * np.pi)
-            probe['angular_velocity'] *= (1 - ANGULAR_DAMPING_FACTOR * 0.5)  # Gentler damping
-            probe['angular_velocity'] = np.clip(probe['angular_velocity'],
-                                              -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY)
+            # ENHANCED ROTATIONAL PHYSICS
+            # Store previous angular velocity for smooth integration
+            # prev_angular_vel = probe['angular_velocity'] # Not directly used in the provided replacement
             
-            # Update linear physics
-            probe['position'] += probe['velocity']
+            # Update angle with sub-step integration for smoothness
+            dt = 1.0  # Time step
+            probe['angle'] = (probe['angle'] + probe['angular_velocity'] * dt) % (2 * np.pi)
+            
+            # Progressive angular damping (stronger at higher speeds)
+            speed_factor_angular = abs(probe['angular_velocity']) / MAX_ANGULAR_VELOCITY if MAX_ANGULAR_VELOCITY > 1e-6 else 0
+            adaptive_damping = ANGULAR_DAMPING_FACTOR * (0.3 + 0.7 * speed_factor_angular)
+            probe['angular_velocity'] *= (1 - adaptive_damping)
+            
+            # Smooth angular velocity limiting
+            if abs(probe['angular_velocity']) > MAX_ANGULAR_VELOCITY:
+                sign = np.sign(probe['angular_velocity'])
+                excess = abs(probe['angular_velocity']) - MAX_ANGULAR_VELOCITY
+                # Gently nudge back towards MAX_ANGULAR_VELOCITY instead of hard clip or proportional reduction
+                probe['angular_velocity'] = sign * (MAX_ANGULAR_VELOCITY + excess * 0.1)
+
+            # ENHANCED LINEAR PHYSICS
+            # Store previous velocity for smoothing
+            # prev_velocity = probe['velocity'].copy() # Not directly used in the provided replacement
+            
+            # Update position with enhanced integration
+            probe['position'] += probe['velocity'] * dt
             probe['position'] = self._wrap_position(probe['position'])
             
-            # SOFT VELOCITY LIMITING (prevents harsh clamping)
+            # ULTRA-SOFT VELOCITY LIMITING with exponential decay
             velocity_magnitude = np.linalg.norm(probe['velocity'])
             if velocity_magnitude > MAX_VELOCITY:
-                # Gradual velocity reduction instead of hard clamp
-                # Ensure MAX_VELOCITY is not zero to avoid division by zero
-                if MAX_VELOCITY > 1e-6: # Use a small epsilon to check for non-zero
-                    excess_factor = velocity_magnitude / MAX_VELOCITY
-                    probe['velocity'] /= (1 + (excess_factor - 1) * 0.1)  # Gentle reduction
-                else:
-                    probe['velocity'] = np.array([0.0,0.0], dtype=np.float32) # Clamp to zero if MAX_VELOCITY is zero
+                if MAX_VELOCITY > 1e-6:
+                    # Exponential approach to max velocity
+                    excess_ratio = velocity_magnitude / MAX_VELOCITY
+                    # Decay factor should be < 1 if excess_ratio > 1
+                    decay_factor = 1.0 / (1.0 + (excess_ratio - 1.0) * 0.05)
+                    probe['velocity'] *= decay_factor
             
-            # MINIMAL SPACE FRICTION (for long-term stability)
-            probe['velocity'] *= 0.9995  # Very slight drag for numerical stability
+            # ADAPTIVE SPACE FRICTION (varies with velocity)
+            speed_factor_linear = velocity_magnitude / MAX_VELOCITY if MAX_VELOCITY > 1e-6 else 0
+            adaptive_friction = 0.9998 + (0.9995 - 0.9998) * speed_factor_linear
+            probe['velocity'] *= adaptive_friction
     
     def _regenerate_resources(self):
         """Regenerate resources over time"""

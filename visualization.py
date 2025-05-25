@@ -112,26 +112,44 @@ class Visualization:
             current_world_pos = probe['position']
             screen_pos_raw = self.world_to_screen(current_world_pos) # Raw screen position from physics
             
-            # INTERPOLATED POSITION for ultra-smooth movement
-            screen_pos_display = screen_pos_raw # Default to raw if no cache or interpolation
+            # ENHANCED INTERPOLATION with velocity prediction
+            screen_pos_display = screen_pos_raw
             if probe_id in self.probe_visual_cache:
                 cache = self.probe_visual_cache[probe_id]
-                if 'prev_screen_pos' in cache:
-                    # Sub-frame interpolation (fixed factor for now, could be time-based)
-                    interp_factor = 0.7 # How much to lean towards the new position (0=old, 1=new)
-                                        # Prompt had 0.3 for prev_position, so (1-0.3) for current.
-                                        # Let's use a factor that determines weight of current position.
-                    prev_s_pos = cache['prev_screen_pos']
-                    interpolated_pos_arr = (
-                        (1.0 - interp_factor) * prev_s_pos +
-                        interp_factor * np.array(screen_pos_raw)
+                if 'prev_screen_pos' in cache and 'prev_velocity' in cache:
+                    # Velocity-based prediction for smoother interpolation
+                    prev_screen_pos = cache['prev_screen_pos']
+                    # velocity_screen is the change in screen position from last frame to this raw frame
+                    velocity_screen = np.array(screen_pos_raw) - prev_screen_pos
+                    
+                    # Predict where the probe should be based on velocity (extrapolate slightly)
+                    # The 1.2 factor means we predict a bit further along the current velocity vector.
+                    # This helps to smooth out changes if the underlying physics step is large.
+                    predicted_pos = prev_screen_pos + velocity_screen * 1.2
+                    
+                    # Blend between raw position and predicted position
+                    # blend_factor = 0.3 means 30% weight to predicted, 70% to current raw.
+                    # This helps to anchor the prediction to the actual current state.
+                    blend_factor = 0.3
+                    interpolated_pos = (
+                        blend_factor * predicted_pos +
+                        (1 - blend_factor) * np.array(screen_pos_raw)
                     )
-                    screen_pos_display = tuple(interpolated_pos_arr.astype(int))
-            
-            # Update cache with the raw (non-interpolated) screen position for next frame's prev_screen_pos
+                    screen_pos_display = tuple(interpolated_pos.astype(int))
+
+            # Enhanced cache update with velocity tracking
             if probe_id not in self.probe_visual_cache:
                 self.probe_visual_cache[probe_id] = {}
-            self.probe_visual_cache[probe_id]['prev_screen_pos'] = np.array(screen_pos_raw)
+
+            cache = self.probe_visual_cache[probe_id]
+            if 'prev_screen_pos' in cache: # Check if prev_screen_pos exists before calculating velocity
+                # Calculate screen velocity based on the change from the last raw screen position
+                cache['prev_velocity'] = np.array(screen_pos_raw) - cache['prev_screen_pos']
+            else:
+                # Initialize prev_velocity if it's the first time or cache was cleared
+                cache['prev_velocity'] = np.array([0, 0], dtype=float)
+
+            cache['prev_screen_pos'] = np.array(screen_pos_raw) # Store current raw for next frame
 
             # Use screen_pos_display for all drawing related to this probe's center
             screen_pos = screen_pos_display
@@ -192,45 +210,58 @@ class Visualization:
             # The prompt uses `probe.get('is_thrusting_visual', False)` which is fine.
             # Let's use the ramp value for intensity.
             
-            if probe.get('is_thrusting_visual', False) and not is_low_power and thrust_ramp_value > 0.01 :
+            if probe.get('is_thrusting_visual', False) and not is_low_power and thrust_ramp_value > 0.01:
                 # Max possible value for target_thrust_power is len(THRUST_FORCE) - 1
-                # THRUST_FORCE = [0.0, 0.15, 0.35, 0.6] has 4 levels, max index 3.
-                # So max target_thrust_power is 3.
-                # flame_intensity should be thrust_ramp_value / max_possible_ramp_value
-                max_ramp_val = float(len(THRUST_FORCE) -1) # Max value of target_thrust_power
-                flame_intensity = 0.0
-                if max_ramp_val > 0 :
-                    flame_intensity = min(1.0, thrust_ramp_value / max_ramp_val) # Normalized 0-1
+                # THRUST_FORCE is now [0.0, 0.08, 0.18, 0.32]
+                max_ramp_val = float(len(THRUST_FORCE) - 1) if len(THRUST_FORCE) > 1 else 1.0
+                flame_intensity = min(1.0, thrust_ramp_value / max_ramp_val) if max_ramp_val > 0 else 0.0
+                
+                # Base flame size with intensity scaling
+                base_flame_length = SPACESHIP_SIZE * (0.4 + 0.9 * flame_intensity)
+                
+                # Multi-layered flickering for more realistic flame
+                time_ticks = pygame.time.get_ticks()
+                primary_flicker = 0.85 + 0.15 * math.sin(time_ticks * 0.025)
+                secondary_flicker = 0.95 + 0.05 * math.sin(time_ticks * 0.04 + 1.5)
+                
+                flame_length = base_flame_length * primary_flicker * secondary_flicker
+                flame_width = SPACESHIP_SIZE * 0.3 * (0.6 + 0.4 * flame_intensity) # Adjusted width formula
+                
+                thrust_power_level_visual = probe.get('thrust_power_visual', 0) # Get target power level
 
-                flame_length = SPACESHIP_SIZE * (0.5 + 0.8 * flame_intensity)
-                
-                # Animate flame with slight flickering
-                # import time # Import at top of file
-                flicker = 0.9 + 0.1 * math.sin(pygame.time.get_ticks() * 0.02) # Use pygame ticks for time
-                flame_length *= flicker
-                flame_width = SPACESHIP_SIZE * 0.4 * (0.5 + 0.5 * flame_intensity) # Width also scales
-
-                base_flame_points = [
-                    np.array([0, SPACESHIP_SIZE * 0.4 + flame_length]),
-                    np.array([-flame_width * 0.5, SPACESHIP_SIZE * 0.4]),
-                    np.array([flame_width * 0.5, SPACESHIP_SIZE * 0.4])
-                ]
-                
-                rotated_flame_points = [rotation_matrix @ p for p in base_flame_points]
-                screen_flame_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_flame_points]
-                
-                # Color based on intensity
-                # thrust_power_visual is the target_power (0-3)
-                thrust_power_level_visual = probe.get('thrust_power_visual', 0)
-                flame_color = (255, 255, 100) # Default Yellowish
-                if thrust_power_level_visual >= 3 : # Max thrust (index 3)
-                    flame_color = (255,100,0) # Bright Orange/Red
-                elif thrust_power_level_visual == 2: # Mid thrust (index 2)
-                    flame_color = (255,165,0) # Orange
-                elif thrust_power_level_visual == 1: # Low thrust (index 1)
-                    flame_color = (255,255,0) # Yellow
-                
-                pygame.draw.polygon(self.screen, flame_color, screen_flame_points)
+                # Create multiple flame layers for depth
+                for layer in range(2):  # Inner and outer flame
+                    layer_factor = 1.0 - layer * 0.3 # Inner layer (0) is 1.0, outer (1) is 0.7
+                    layer_length = flame_length * layer_factor
+                    layer_width = flame_width * layer_factor
+                    
+                    # Points for this flame layer, relative to ship center, pointing "down" (positive Y in local ship coords)
+                    layer_flame_points_local = [
+                        np.array([0, SPACESHIP_SIZE * 0.4 + layer_length]), # Tip of the flame
+                        np.array([-layer_width * 0.5, SPACESHIP_SIZE * 0.4]), # Base left
+                        np.array([layer_width * 0.5, SPACESHIP_SIZE * 0.4])  # Base right
+                    ]
+                    
+                    # Rotate flame points according to ship's angle
+                    rotated_layer_points = [rotation_matrix @ p for p in layer_flame_points_local]
+                    # Translate to screen position
+                    screen_layer_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1])
+                                          for rp in rotated_layer_points]
+                    
+                    # Color variations by layer and intensity
+                    if layer == 0:  # Inner flame - hotter
+                        # Brighter/whiter for higher intensity
+                        if thrust_power_level_visual >= 2: # Corresponds to THRUST_FORCE index 2 (0.18) or 3 (0.32)
+                            layer_color = (255, 200, 150) # Bright orange-yellow
+                        else: # Lower thrust
+                            layer_color = (255, 230, 180) # Paler yellow
+                    else:  # Outer flame - cooler
+                        if thrust_power_level_visual >= 2:
+                            layer_color = (255, 120, 0)   # Deep orange
+                        else:
+                            layer_color = (255, 165, 50)  # Softer orange
+                    
+                    pygame.draw.polygon(self.screen, layer_color, screen_layer_points)
 
             # Draw mining laser if active (using screen_pos for laser origin calculation)
             if probe.get('is_mining_visual', False) and probe.get('mining_target_pos_visual') is not None and not is_low_power:

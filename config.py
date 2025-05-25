@@ -24,7 +24,7 @@ REPLICATION_COST = 40
 REPLICATION_MIN_ENERGY = 60
 PROBE_MASS = 8.0  # Slightly lighter for more responsive feel
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
-THRUST_FORCE = [0.0, 0.15, 0.35, 0.6]  # Much smaller forces, 4 levels
+THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]
 THRUST_ENERGY_COST_FACTOR = 0.02  # Lower cost for more action
 ENERGY_DECAY_RATE = 0.008  # Slightly lower decay
 LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
@@ -35,18 +35,23 @@ MOMENT_OF_INERTIA = 5.0  # Affects rotational acceleration (higher = slower)
 # ROTATIONAL_THRUST_TORQUE defines torque values for [None, Left_Low, Left_High, Right_Low, Right_High] actions
 # For simplicity, let's use direct torque values for actions: 0=None, 1=Torque_L1, 2=Torque_L2, 3=Torque_R1, 4=Torque_R2
 # Let's define torque magnitudes and apply direction in environment
-TORQUE_MAGNITUDES = [0.0, 0.015, 0.035] # Smaller torques, 3 levels (None, Low, High)
+TORQUE_MAGNITUDES = [0.0, 0.008, 0.018]  # Reduce from [0.0, 0.015, 0.035]
 ROTATIONAL_ENERGY_COST_FACTOR = 0.11  # Lower rotational cost
 MAX_ANGULAR_VELOCITY = np.pi / 4  # Max turn rate (radians/step) for normalization
 ANGULAR_DAMPING_FACTOR = 0.05    # Reduces angular velocity each step (e.g., 0.05 = 5% reduction)
 
 # Smoothing Parameters
-ACTION_SMOOTHING_FACTOR = 0.7  # Blend current/previous actions for linear thrust
-MIN_THRUST_DURATION = 11        # Minimum frames thrust stays active
-THRUST_RAMP_TIME = 9           # Frames to ramp thrust up/down
-ROTATION_SMOOTHING_FACTOR = 0.8 # Separate smoothing for rotation action choice
-MIN_ROTATION_DURATION = 3      # Minimum frames torque stays active (similar to thrust)
-ROTATION_RAMP_TIME = 2         # Frames to ramp torque up/down
+ACTION_SMOOTHING_FACTOR = 0.85  # Increase from 0.7 for more smoothing
+MIN_THRUST_DURATION = 8        # Increase from 4 for more realistic burns
+THRUST_RAMP_TIME = 6           # Increase from 3
+ROTATION_SMOOTHING_FACTOR = 0.9 # Increase from 0.8
+MIN_ROTATION_DURATION = 6      # Increase from 3
+ROTATION_RAMP_TIME = 4         # Increase from 2
+
+# Anti-spam parameters
+THRUSTER_STARTUP_ENERGY_COST = 1.5  # Extra cost for starting thrusters
+RAPID_SWITCHING_PENALTY = 0.8       # Penalty for frequent action changes
+SWITCHING_DETECTION_WINDOW = 10     # Frames to track switching frequency
 
 # Communication
 COMM_RANGE = 100
