@@ -247,13 +247,55 @@ class SpaceEnvironment(gym.Env):
         self._cleanup_old_messages()
         self.step_count += 1
         
+        # Check if all probes are disabled (e.g., out of energy)
+        all_probes_disabled = True
+        # Only consider probes that are supposed to be alive
+        active_probes_exist = False
+        for probe_id in self.probes:
+            if self.probes[probe_id]['alive']:
+                active_probes_exist = True
+                if self.probes[probe_id]['energy'] > 0:
+                    all_probes_disabled = False
+                    break
+        
+        if not active_probes_exist and self.probes: # No active probes left, but probes dictionary is not empty
+            all_probes_disabled = True
+        elif not self.probes: # No probes at all
+             all_probes_disabled = True # Or handle as a special case, for now, consider it done.
+
+
         # Generate observations
         for probe_id in self.probes:
             if self.probes[probe_id]['alive']:
                 observations[probe_id] = self.get_observation(probe_id)
-                dones[probe_id] = self.step_count >= EPISODE_LENGTH
+                # Episode ends if max steps reached OR all probes are disabled
+                dones[probe_id] = (self.step_count >= EPISODE_LENGTH) or (active_probes_exist and all_probes_disabled)
                 infos[probe_id] = {'generation': self.probes[probe_id]['generation']}
-        
+            # If a probe was alive but now all are disabled, it should also be marked as done.
+            # However, the multi-agent RL setup might handle individual 'dones' differently.
+            # The current logic sets 'done' for all alive probes if the condition (all_probes_disabled) is met.
+            # If a probe is not 'alive', it shouldn't be in the observations/dones/rewards dicts for this step.
+            # The cleanup of dead probes happens in _update_physics.
+
+        # If there are no probes at all (e.g. after a reset and before any are added, or if all died and were removed)
+        # the environment should signal done to prevent issues with the RL agent expecting observations.
+        # This is particularly for single-agent wrappers around a multi-agent env.
+        # For SB3 with Dict observations, if observations dict is empty, it might be okay.
+        # However, if all_probes_disabled is true because self.probes is empty,
+        # then the loop above won't run.
+        # The `ProbeEnv` wrapper in probe.py handles the case of no alive probes by returning a default obs.
+        # Let's ensure `dones` reflects the global episode end.
+        if not active_probes_exist and self.probes: # All probes that were there are now dead
+             for pid in list(dones.keys()): # Ensure all listed dones are true
+                  dones[pid] = True
+        elif not self.probes: # No probes at all, episode should be considered done.
+            # This case might need special handling in the main loop or agent wrapper if it occurs.
+            # For now, if there are no probes, the observations dict will be empty.
+            # The `ProbeEnv` wrapper in probe.py should handle this by providing a dummy observation
+            # and setting done=True.
+            pass
+
+
         return observations, rewards, dones, infos
     
     def _process_probe_action(self, probe_id: int, action: np.ndarray) -> float:
