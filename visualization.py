@@ -3,7 +3,11 @@ import pygame
 import numpy as np
 from typing import Dict, List
 import math
-from config import *
+from config import (
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, WORLD_SIZE_SIM, ENABLE_PARTICLE_EFFECTS,
+    SPACESHIP_SIZE, MAX_ENERGY, MAX_VELOCITY, SHOW_SIMPLE_PROBE_INFO,
+    SHOW_SIMPLE_RESOURCE_INFO, RESOURCE_MAX_AMOUNT # Added RESOURCE_MAX_AMOUNT
+)
 from environment import Resource # Added import for Resource
 from environment import Message # Added import for Message
 from organic_ship_renderer import OrganicShipRenderer
@@ -33,7 +37,7 @@ class Visualization:
         self.ui_probe_id_rects = {} # Will be managed by ModernUI or adapted
         self.probe_trails = {} # Keep for now, might be replaced or enhanced
         self.camera_offset = np.array([0.0, 0.0]) # For starfield parallax
-        self.zoom_level = 16.0 # Initial zoom level to show about 5 AU diameter
+        self.zoom_level = 1.0 # Initial zoom level for the new WORLD_SIZE
         
         # Colors (old color dict, ModernUI has its own, this might be phased out)
         self.colors = {
@@ -53,8 +57,8 @@ class Visualization:
         # If ModernUI is an overlay, then full SCREEN_WIDTH might be used for world.
         # Let's assume the main simulation view area is the full screen for now,
         # as the solar system is vast. ModernUI can be an overlay.
-        self.scale_x = SCREEN_WIDTH / WORLD_SIZE
-        self.scale_y = SCREEN_HEIGHT / WORLD_SIZE
+        self.scale_x = SCREEN_WIDTH / WORLD_SIZE_SIM if WORLD_SIZE_SIM != 0 else 1
+        self.scale_y = SCREEN_HEIGHT / WORLD_SIZE_SIM if WORLD_SIZE_SIM != 0 else 1
         
         # Trail storage
         self.probe_trails = {}
@@ -62,8 +66,8 @@ class Visualization:
     def world_to_screen(self, world_pos):
         """Convert world coordinates to screen coordinates, centering the world"""
         # Calculate the offset from the world center
-        offset_x = world_pos[0] - (WORLD_SIZE / 2)
-        offset_y = world_pos[1] - (WORLD_SIZE / 2)
+        offset_x = world_pos[0] - (WORLD_SIZE_SIM / 2)
+        offset_y = world_pos[1] - (WORLD_SIZE_SIM / 2)
 
         # Scale the offset by zoom level and add the screen center
         screen_x = int(offset_x * self.scale_x * self.zoom_level + SCREEN_WIDTH / 2)
@@ -111,12 +115,24 @@ class Visualization:
         if hasattr(environment, 'get_celestial_bodies_data_for_render'):
             celestial_data = environment.get_celestial_bodies_data_for_render()
             for body_data in celestial_data:
-                screen_pos = self.world_to_screen(body_data['position'])
+                # No filter, draw all bodies provided (Sun, Mercury, Venus, Earth, Mars, Moon)
+                # The data should come from CelestialBody.position_sim and CelestialBody.display_radius_sim
+
+                screen_pos = self.world_to_screen(body_data['position']) # position should be position_sim
                 # Scale radius by zoom_level, ensuring a minimum pixel size
-                screen_radius = int(body_data['radius_sim'] * self.zoom_level)
+                # Use 'display_radius_sim' which is already in sim units for display
+                screen_radius = int(body_data['radius_sim'] * min(self.scale_x, self.scale_y) * self.zoom_level) # Correctly scale sim radius to screen
                 screen_radius = max(1, screen_radius) # Ensure at least 1 pixel radius
+
                 pygame.draw.circle(self.screen, body_data['color'], screen_pos, screen_radius)
-                # Optional: Draw name labels
+                
+                # Optional: Draw name labels if desired (can be performance intensive)
+                # if self.zoom_level > 0.01: # Example: only draw names if zoomed in enough
+                #     text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
+                #     text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
+                #     self.screen.blit(text_surface, text_rect)
+            # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
+        # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
                 # text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
                 # text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
                 # self.screen.blit(text_surface, text_rect)

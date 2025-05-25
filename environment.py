@@ -3,15 +3,24 @@ import gym
 from gym import spaces
 import numpy as np
 import random
+import math # Added for math.radians
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
-from config import *
-from solarsystem import CelestialBody, OrbitalMechanics
-# Specific config imports (already covered by 'from config import *' but listed for clarity if needed later)
-# from config import SIM_SECONDS_PER_STEP, PLANET_DATA, SUN_MASS_KG, AU_SCALE, SUN_POSITION, WORLD_SIZE
+from config import ( # Explicit imports for clarity and new constants
+    PLANET_DATA, SIM_SECONDS_PER_STEP, AU_SCALE, KM_SCALE,
+    SUN_POSITION_SIM, WORLD_SIZE_SIM, SUN_MASS_KG, DEBUG_ORBITAL_MECHANICS,
+    OBSERVATION_SPACE_SIZE, ACTION_SPACE_DIMS, EPISODE_LENGTH, # For SpaceEnvironment
+    RESOURCE_COUNT, RESOURCE_MIN_AMOUNT, RESOURCE_MAX_AMOUNT, RESOURCE_REGEN_RATE, # For SpaceEnvironment
+    INITIAL_ENERGY # For SpaceEnvironment
+)
+from solarsystem import CelestialBody, OrbitalMechanics # AsteroidBelt is commented out in solarsystem.py
+
+# Keep existing Message, Resource, SpaceEnvironment classes if they are still used as a base
+# For brevity, assuming they are the same as before unless specified.
+# If SolarSystemEnvironment is now the primary environment, SpaceEnvironment might be simplified or removed later.
 
 @dataclass
-class Message:
+class Message: # Copied from previous version if still needed
     sender_id: int
     msg_type: str
     position: Tuple[float, float]
@@ -19,7 +28,7 @@ class Message:
     timestamp: int
 
 @dataclass
-class Resource:
+class Resource: # Copied from previous version if still needed
     position: Tuple[float, float]
     amount: float
     max_amount: float
@@ -32,934 +41,278 @@ class Resource:
     def regenerate(self):
         self.amount = min(self.max_amount, self.amount + RESOURCE_REGEN_RATE)
 
-class SpaceEnvironment(gym.Env):
+class SpaceEnvironment(gym.Env): # Copied from previous version, might need pruning if not fully used
     def __init__(self):
         super().__init__()
-        self.world_width = WORLD_WIDTH
-        self.world_height = WORLD_HEIGHT
-        self.resources = []
-        self.probes = {}
-        self.messages = []
+        # Using WORLD_SIZE_SIM from new config for consistency
+        self.world_width = WORLD_SIZE_SIM
+        self.world_height = WORLD_SIZE_SIM
+        self.resources: List[Resource] = [] # Ensure type hint
+        self.probes: Dict[int, Dict] = {}    # Ensure type hint
+        self.messages: List[Message] = []   # Ensure type hint
         self.step_count = 0
         self.max_probe_id = 0
         self.total_resources_mined = 0.0
         
-        # Initialize resources
         self._generate_resources()
         
-        # Observation space for each probe
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(OBSERVATION_SPACE_SIZE,), # Uses constant from config.py
+            shape=(OBSERVATION_SPACE_SIZE,),
             dtype=np.float32
         )
+        self.action_space = spaces.MultiDiscrete(ACTION_SPACE_DIMS)
         
-        # Action space: [thrust_dir, thrust_power, communicate, replicate, target_select]
-        self.action_space = spaces.MultiDiscrete(ACTION_SPACE_DIMS) # Uses constant from config.py
-        
-    def _generate_resources(self):
+    def _generate_resources(self): # Simplified, assuming resources are less critical for solar system focus
         self.resources = []
-        for _ in range(RESOURCE_COUNT):
-            pos = (random.uniform(0, self.world_width), 
-                   random.uniform(0, self.world_height))
-            amount = random.uniform(RESOURCE_MIN_AMOUNT, RESOURCE_MAX_AMOUNT)
-            self.resources.append(Resource(pos, amount, amount))
-    
+        # For now, fewer resources if any, as focus is on planets
+        # for _ in range(RESOURCE_COUNT if 'RESOURCE_COUNT' in globals() else 1): # Use RESOURCE_COUNT from config
+        #     pos = (random.uniform(0, self.world_width), 
+        #            random.uniform(0, self.world_height))
+        #     amount = random.uniform(RESOURCE_MIN_AMOUNT if 'RESOURCE_MIN_AMOUNT' in globals() else 100, 
+        #                             RESOURCE_MAX_AMOUNT if 'RESOURCE_MAX_AMOUNT' in globals() else 200)
+        #     self.resources.append(Resource(pos, amount, amount))
+            
     def add_probe(self, probe_id: int, position: Tuple[float, float], 
                   energy: float = INITIAL_ENERGY, generation: int = 0):
-        """Add a new probe to the environment"""
+        # Simplified probe for now, can be expanded later
         self.probes[probe_id] = {
             'position': np.array(position, dtype=np.float32),
-            'velocity': np.array([0.0, 0.0], dtype=np.float32),
+            'velocity': np.array([0.0, 0.0], dtype=np.float32), # Probes are not part of orbital mechanics here
             'energy': energy,
-            'age': 0,
-            'generation': generation,
-            'visited_positions': set(),
-            'total_reward': 0,
             'alive': True,
-            'mass': PROBE_MASS,  # Initialize probe mass
-            'is_thrusting_visual': False, # For visualization
-            'thrust_power_visual': 0,     # For visualization
-            'is_mining_visual': False,    # For mining laser visualization
-            'mining_target_pos_visual': None, # For mining laser visualization
-            'discovered_resources': set(), # For resource discovery reward
-            'selected_target_info': None, # For target selection: {'type': 'resource', 'id': res_idx, 'world_pos': (x,y)}
-            'distance_to_target_last_step': float('inf'), # For target proximity reward
-            'angle': random.uniform(0, 2 * np.pi), # Initial orientation in radians
-            'angular_velocity': 0.0, # Initial angular velocity in radians/step
-            'last_target_switch_time': 0, # For target switching cooldown
-            'current_target_id': None, # Actual ID of the currently selected resource, for anti-spam
-            'has_reached_current_target': False, # For one-time bonus upon reaching selected target
-            'action_smoothing_state': {
-                'previous_linear_action': 0,
-                'previous_rotation_action': 0, # This was in the prompt but might not be directly used if blending raw actions
-                'thrust_timer': 0,
-                'target_thrust_power': 0,
-                'current_thrust_ramp': 0.0,  # Current ramped power for linear thrust (0 to target_thrust_power)
-                'linear_blend': 0.0,         # Smoothed linear command (0-3 for linear_thrust_action)
-                
-                'rotation_blend': 0.0,       # Smoothed rotation command choice (0-4 for rotational_torque_action)
-                'rotation_timer': 0,         # Timer for minimum rotation duration
-                'target_rotation_action': 0, # The target rotational action (0-4) being ramped/maintained
-                'current_rotation_ramp': 0.0, # Current ramped "intensity" of rotation (0 to target_rotation_action's implied level)
-                
-                # For multi-stage smoothing
-                'secondary_linear_blend': 0.0,
-                'secondary_rotation_blend': 0.0,
-
-                # For anti-spam measures
-                'action_switches_recent': 0,
-                'last_effective_linear': 0,
-                'last_effective_rotation': 0,
-                'startup_energy_debt': 0.0
-            }
+            # Add other necessary fields if SpaceEnvironment.step uses them
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
-    
+
     def get_observation(self, probe_id: int) -> np.ndarray:
-        """Get observation for a specific probe"""
-        probe = self.probes[probe_id]
-        obs = np.zeros(OBSERVATION_SPACE_SIZE, dtype=np.float32) # Use constant
-        
-        # Own state (6 values) - Indices 0-5
-        obs[0:2] = probe['position'] / np.array([self.world_width, self.world_height])
-        obs[2:4] = probe['velocity'] / MAX_VELOCITY
-        obs[4] = probe['energy'] / MAX_ENERGY
-        obs[5] = probe['age'] / EPISODE_LENGTH
-        
-        # Nearest 3 resources (9 values)
-        resource_distances = []
-        for i, resource in enumerate(self.resources):
-            if resource.amount > 0:
-                dist = self._distance(probe['position'], resource.position)
-                resource_distances.append((dist, i))
-        
-        resource_distances.sort()
-        # Nearest NUM_OBSERVED_RESOURCES_FOR_TARGETING resources (default 3*3=9 values) - Indices 6-14
-        for i in range(NUM_OBSERVED_RESOURCES_FOR_TARGETING):
-            base_idx = 6 + i * 3
-            if i < len(resource_distances):
-                _, res_idx = resource_distances[i]
-                resource = self.resources[res_idx]
-                rel_pos = np.array(resource.position) - probe['position']
-                rel_pos = self._wrap_position(rel_pos)
-                obs[base_idx:base_idx+2] = rel_pos / np.array([self.world_width, self.world_height])
-                obs[base_idx+2] = resource.amount / RESOURCE_MAX_AMOUNT
-        
-        # Nearest 2 other probes (4 values)
-        other_probes = [(pid, p) for pid, p in self.probes.items() 
-                       if pid != probe_id and p['alive']]
-        probe_distances = []
-        for other_id, other_probe in other_probes:
-            dist = self._distance(probe['position'], other_probe['position'])
-            probe_distances.append((dist, other_id))
-        
-        probe_distances.sort()
-        # Nearest 2 other probes (2*2=4 values) - Indices 15-18
-        for i in range(2): # Assuming we always observe 2 other probes if available
-            base_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + i * 2 # Adjusted base_idx
-            if i < len(probe_distances):
-                _, other_id = probe_distances[i]
-                other_probe = self.probes[other_id]
-                rel_pos = np.array(other_probe['position']) - probe['position']
-                rel_pos = self._wrap_position(rel_pos)
-                obs[base_idx:base_idx+1] = [self._distance([0,0], rel_pos) / (self.world_width/2)]
-                obs[base_idx+1] = other_probe['energy'] / MAX_ENERGY
-        
-        # Recent messages (1 value - simplified)
-        recent_messages = [msg for msg in self.messages 
-                          if self.step_count - msg.timestamp < 10 and
-                          self._distance(probe['position'], msg.position) < COMM_RANGE]
-        obs[6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 2 * 2] = min(len(recent_messages) / 5.0, 1.0)  # Message count - Index 19
-        
-        # Target information (3 values) - Indices 20-22 (or 19-21 if OBS_SIZE is 22)
-        # Correcting indices based on OBS_SIZE = 22:
-        # Own state: 0-5 (6)
-        # Resources: 6-14 (9) (assuming NUM_OBSERVED_RESOURCES_FOR_TARGETING = 3)
-        # Other Probes: 15-18 (4)
-        # Messages: 19 (1)
-        # Target Active: 20 (1)
-        # Target Rel Pos: 21-22 (2) -> This makes it 23. Let's adjust.
-        # OBS_SIZE = 22 means indices 0-21.
-        # Messages will be at index 19.
-        # Target Active at 20. Target Rel Pos at 21, 22 is not possible.
-        # Let's make Target Rel Pos use 2 slots, so OBS_SIZE should be 19 (current) + 1 (target_active) + 2 (target_rel_pos) = 22.
-        # Indices: Messages (18), Target Active (19), Target Rel Pos (20, 21)
+        # Dummy observation if probes are not the focus
+        return np.zeros(OBSERVATION_SPACE_SIZE, dtype=np.float32)
 
-        # Indices for OBS_SIZE = 24:
-        # Own state: 0-5 (6)
-        # Resources: 6-14 (9) (NUM_OBSERVED_RESOURCES_FOR_TARGETING = 3)
-        # Other Probes: 15-18 (4)
-        # Messages: 19 (1)
-        # Target Active: 20 (1)
-        # Target Rel Pos: 21-22 (2)
-        # Angle: 22 (1) -> Error in manual calculation, should be 22 for angle, 23 for ang_vel if OBS_SIZE=24
-        # Corrected indices for OBS_SIZE = 24:
-        # Messages: obs[19]
-        # Target Active: obs[20]
-        # Target Rel Pos X: obs[21]
-        # Target Rel Pos Y: obs[22]
-        # Angle: obs[23] -> This is still off.
-        # Let's use the config breakdown: Base (19 values, indices 0-18), Target (3 values, indices 19-21), Rotation (2 values, indices 22-23)
-
-        msg_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 4 # Base index for messages is 19
-        obs[msg_idx] = min(len(recent_messages) / 5.0, 1.0) # Messages at index 19
-
-        target_active_idx = msg_idx + 1 # Index 20
-        target_rel_pos_x_idx = msg_idx + 2 # Index 21
-        target_rel_pos_y_idx = msg_idx + 3 # Index 22
-
-        if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
-            obs[target_active_idx] = 1.0
-            target_world_pos = probe['selected_target_info']['world_pos']
-            rel_pos_to_target = np.array(target_world_pos) - probe['position']
-            rel_pos_to_target = self._wrap_position(rel_pos_to_target)
-            obs[target_rel_pos_x_idx] = rel_pos_to_target[0] / (self.world_width / 2) # Normalize to [-1, 1] approx
-            obs[target_rel_pos_y_idx] = rel_pos_to_target[1] / (self.world_height / 2)
-        else:
-            obs[target_active_idx] = 0.0
-            obs[target_rel_pos_x_idx] = 0.0
-            obs[target_rel_pos_y_idx] = 0.0
-            
-        # Rotational Info - Indices 22 & 23 (if OBS_SIZE = 24)
-        # Corrected: Angle at index 22, Angular Velocity at index 23
-        angle_idx = target_rel_pos_y_idx + 1 # Index 22
-        angular_velocity_idx = target_rel_pos_y_idx + 2 # Index 23
-
-        obs[angle_idx] = (probe['angle'] % (2 * np.pi)) / (2 * np.pi)  # Normalize angle to [0, 1]
-        obs[angular_velocity_idx] = np.clip(probe['angular_velocity'], -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY) / MAX_ANGULAR_VELOCITY # Normalize to [-1,1]
-            
-        return obs
-    
     def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
-        """Execute one step of the environment"""
+        # Basic step for probes if any are active
         observations = {}
         rewards = {}
         dones = {}
         infos = {}
         
-        # Process actions for each probe
-        for probe_id, action in actions.items():
-            if probe_id in self.probes and self.probes[probe_id]['alive']:
-                reward = self._process_probe_action(probe_id, action)
-                rewards[probe_id] = reward
-        
-        # Update environment
-        self._update_physics()
-        self._regenerate_resources()
-        self._cleanup_old_messages()
-        self.step_count += 1
-        
-        # Check if all probes are disabled (e.g., out of energy)
-        all_probes_disabled = True
-        # Only consider probes that are supposed to be alive
-        active_probes_exist = False
-        for probe_id in self.probes:
+        # Minimal probe logic for now
+        for probe_id in list(self.probes.keys()): # Iterate over a copy if probes can be removed
             if self.probes[probe_id]['alive']:
-                active_probes_exist = True
-                if self.probes[probe_id]['energy'] > 0:
-                    all_probes_disabled = False
-                    break
-        
-        if not active_probes_exist and self.probes: # No active probes left, but probes dictionary is not empty
-            all_probes_disabled = True
-        elif not self.probes: # No probes at all
-             all_probes_disabled = True # Or handle as a special case, for now, consider it done.
-
-
-        # Generate observations
-        for probe_id in self.probes:
-            if self.probes[probe_id]['alive']:
+                # Process actions if any relevant probe actions exist
+                # Update probe physics (e.g., simple movement, energy decay)
+                # self.probes[probe_id]['energy'] -= 0.1 # Example decay
+                # if self.probes[probe_id]['energy'] <= 0:
+                #     self.probes[probe_id]['alive'] = False
+                
                 observations[probe_id] = self.get_observation(probe_id)
-                # Episode ends if max steps reached OR all probes are disabled
-                dones[probe_id] = (self.step_count >= EPISODE_LENGTH) or (active_probes_exist and all_probes_disabled)
-                infos[probe_id] = {'generation': self.probes[probe_id]['generation']}
-            # If a probe was alive but now all are disabled, it should also be marked as done.
-            # However, the multi-agent RL setup might handle individual 'dones' differently.
-            # The current logic sets 'done' for all alive probes if the condition (all_probes_disabled) is met.
-            # If a probe is not 'alive', it shouldn't be in the observations/dones/rewards dicts for this step.
-            # The cleanup of dead probes happens in _update_physics.
+                rewards[probe_id] = 0.0 # Placeholder
+                dones[probe_id] = self.step_count >= EPISODE_LENGTH # Placeholder
+                infos[probe_id] = {}
+            else: # Remove dead probes
+                # del self.probes[probe_id] # Be careful if iterating and modifying
+                pass
 
-        # If there are no probes at all (e.g. after a reset and before any are added, or if all died and were removed)
-        # the environment should signal done to prevent issues with the RL agent expecting observations.
-        # This is particularly for single-agent wrappers around a multi-agent env.
-        # For SB3 with Dict observations, if observations dict is empty, it might be okay.
-        # However, if all_probes_disabled is true because self.probes is empty,
-        # then the loop above won't run.
-        # The `ProbeEnv` wrapper in probe.py handles the case of no alive probes by returning a default obs.
-        # Let's ensure `dones` reflects the global episode end.
-        if not active_probes_exist and self.probes: # All probes that were there are now dead
-             for pid in list(dones.keys()): # Ensure all listed dones are true
-                  dones[pid] = True
-        elif not self.probes: # No probes at all, episode should be considered done.
-            # This case might need special handling in the main loop or agent wrapper if it occurs.
-            # For now, if there are no probes, the observations dict will be empty.
-            # The `ProbeEnv` wrapper in probe.py should handle this by providing a dummy observation
-            # and setting done=True.
-            pass
-
-
+        self.step_count += 1
         return observations, rewards, dones, infos
-    
-    def _process_probe_action(self, probe_id: int, action: np.ndarray) -> float:
-        """Process a single probe's action with smoothing and return reward"""
-        probe = self.probes[probe_id]
-        reward = 0.0
-        
-        # Reset visual flags
-        probe['is_thrusting_visual'] = False
-        probe['thrust_power_visual'] = 0
-        probe['is_mining_visual'] = False
-        probe['mining_target_pos_visual'] = None
 
-        # Scaled Penalty for Low Energy
-        if 0 < probe['energy'] <= MAX_ENERGY * LOW_ENERGY_PENALTY_LEVEL_2_THRESHOLD:
-            reward -= LOW_ENERGY_PENALTY_LEVEL_2_FACTOR
-        elif 0 < probe['energy'] <= MAX_ENERGY * LOW_ENERGY_PENALTY_LEVEL_1_THRESHOLD:
-            reward -= LOW_ENERGY_PENALTY_LEVEL_1_FACTOR
-
-        is_low_power = probe['energy'] <= 0
-        if is_low_power:
-            reward -= LOW_POWER_PENALTY
-
-        # Parse raw actions from the agent
-        raw_linear_thrust_action, raw_rotational_torque_action, \
-        raw_communicate_action, raw_replicate_action, raw_target_select_action = action
-
-        smoothing_state = probe['action_smoothing_state']
-
-        # --- MULTI-STAGE ACTION SMOOTHING FOR LINEAR THRUST ---
-        # First stage (existing, now primary blend)
-        input_linear_action = 0 if is_low_power else raw_linear_thrust_action
-        smoothing_state['linear_blend'] = (
-            ACTION_SMOOTHING_FACTOR * smoothing_state['linear_blend'] +
-            (1 - ACTION_SMOOTHING_FACTOR) * input_linear_action
-        )
-
-        # Second stage for ultra-smoothness
-        smoothing_state['secondary_linear_blend'] = (
-            0.9 * smoothing_state['secondary_linear_blend'] +
-            0.1 * smoothing_state['linear_blend']
-        )
-        effective_linear_action = int(round(smoothing_state['secondary_linear_blend']))
-
-        # --- LINEAR THRUST DURATION & RAMPING ---
-        # Manage thrust timer and target power
-        if effective_linear_action > 0 and not is_low_power:
-            if smoothing_state['thrust_timer'] <= 0:  # Start new thrust
-                smoothing_state['target_thrust_power'] = effective_linear_action
-                smoothing_state['thrust_timer'] = MIN_THRUST_DURATION
-        
-        if smoothing_state['thrust_timer'] > 0:
-            smoothing_state['thrust_timer'] -= 1
-            if is_low_power:
-                 smoothing_state['thrust_timer'] = 0 # Stop thrust if low power
-        
-        if smoothing_state['thrust_timer'] <= 0:
-            smoothing_state['target_thrust_power'] = 0
-
-        # Update current_thrust_ramp
-        if smoothing_state['target_thrust_power'] > 0 and not is_low_power: # Ramp Up
-            # ramp_progress_up is how much of the MIN_THRUST_DURATION has passed relative to RAMP_TIME
-            # This means current_thrust_ramp will reach target_thrust_power when timer is (MIN_THRUST_DURATION - THRUST_RAMP_TIME)
-            ramp_progress_up = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / max(1, THRUST_RAMP_TIME))
-            smoothing_state['current_thrust_ramp'] = smoothing_state['target_thrust_power'] * ramp_progress_up
-        else: # Ramp Down (target_thrust_power is 0 or is_low_power)
-            max_ramp_val = float(len(THRUST_FORCE) - 1) # Max possible value for target_thrust_power (e.g., 3)
-            decrement_amount = max_ramp_val / max(1, THRUST_RAMP_TIME) # Ramp down from max in RAMP_TIME steps
-            smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - decrement_amount)
-
-        # Apply actual thrust
-        actual_thrust_magnitude = 0.0
-        if smoothing_state['current_thrust_ramp'] > 0.01 and not is_low_power:
-            # current_thrust_ramp is target_power * ramp_progress_up.
-            # To get actual force, scale the THRUST_FORCE[target_power] by (current_ramp / target_power)
-            # This simplifies to THRUST_FORCE[target_power] * ramp_progress_up
-            # target_thrust_power should be valid index for THRUST_FORCE (0 to len-1)
-            target_power_idx = smoothing_state['target_thrust_power']
-            if 0 <= target_power_idx < len(THRUST_FORCE):
-                 # Calculate ramp_progress based on current_thrust_ramp and target_thrust_power
-                ramp_progress_for_force = 0.0
-                if smoothing_state['target_thrust_power'] > 0: # Avoid division by zero if target is 0
-                    ramp_progress_for_force = smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power']
-                
-                actual_thrust_magnitude = THRUST_FORCE[target_power_idx] * ramp_progress_for_force
-            
-            if actual_thrust_magnitude > 0.01:
-                direction_vector = np.array([np.cos(probe['angle']), np.sin(probe['angle'])])
-                force_vector = direction_vector * actual_thrust_magnitude
-                acceleration = force_vector / probe['mass']
-                probe['velocity'] += acceleration
-                
-                probe['is_thrusting_visual'] = True
-                # Visual shows the intended power level, ramp affects actual force
-                probe['thrust_power_visual'] = smoothing_state['target_thrust_power']
-                
-                energy_cost = actual_thrust_magnitude * THRUST_ENERGY_COST_FACTOR
-                probe['energy'] = max(0, probe['energy'] - energy_cost)
-                reward -= energy_cost * 0.01
-        else: # Ensure visual is off if no thrust applied
-            probe['is_thrusting_visual'] = False
-            probe['thrust_power_visual'] = 0
-
-
-        # --- MULTI-STAGE ACTION SMOOTHING FOR ROTATIONAL TORQUE ---
-        input_rotational_action = 0 if is_low_power else raw_rotational_torque_action
-        smoothing_state['rotation_blend'] = (
-            ROTATION_SMOOTHING_FACTOR * smoothing_state['rotation_blend'] +
-            (1 - ROTATION_SMOOTHING_FACTOR) * input_rotational_action
-        )
-        
-        # Second stage for ultra-smoothness
-        smoothing_state['secondary_rotation_blend'] = (
-            0.95 * smoothing_state['secondary_rotation_blend'] +
-            0.05 * smoothing_state['rotation_blend']
-        )
-        effective_rotation_action = int(round(smoothing_state['secondary_rotation_blend'])) # This is 0-4
-
-        # --- THRUSTER ANTI-SPAM MEASURES ---
-        # Detect and penalize rapid action switching
-        # Note: effective_linear_action was defined earlier in the multi-stage linear smoothing
-        if effective_linear_action != smoothing_state.get('last_effective_linear', 0):
-            smoothing_state['action_switches_recent'] += 1
-            # Only apply startup cost if the thruster is actually trying to engage (action > 0)
-            if effective_linear_action > 0:
-                 smoothing_state['startup_energy_debt'] += THRUSTER_STARTUP_ENERGY_COST
-            
-        if effective_rotation_action != smoothing_state.get('last_effective_rotation', 0):
-            smoothing_state['action_switches_recent'] += 1
-            # Rotational startup cost could also be added if desired, similar to linear
-
-        # Apply switching penalty
-        # Consider if SWITCHING_DETECTION_WINDOW should be used here to average switches over time
-        if smoothing_state['action_switches_recent'] > 3:  # More than 3 switches recently (adjust threshold as needed)
-            penalty = RAPID_SWITCHING_PENALTY * (smoothing_state['action_switches_recent'] - 3) # Penalize excess switches
-            reward -= penalty
-            probe['energy'] = max(0, probe['energy'] - penalty * 0.5) # Penalize energy too
-
-        # Decay switching counter (e.g., per step or over SWITCHING_DETECTION_WINDOW)
-        # For per-step decay:
-        smoothing_state['action_switches_recent'] = max(0, smoothing_state['action_switches_recent'] - (1.0 / SWITCHING_DETECTION_WINDOW))
-
-
-        # Apply startup energy debt
-        if smoothing_state['startup_energy_debt'] > 0:
-            debt_payment = min(smoothing_state['startup_energy_debt'], THRUSTER_STARTUP_ENERGY_COST * 0.1) # Pay small portion each step
-            probe['energy'] = max(0, probe['energy'] - debt_payment)
-            smoothing_state['startup_energy_debt'] -= debt_payment
-            reward -= debt_payment * 0.01 # Small reward penalty for paying debt
-
-        # Update last actions
-        smoothing_state['last_effective_linear'] = effective_linear_action
-        smoothing_state['last_effective_rotation'] = effective_rotation_action
-        
-        # Manage rotation timer and target action
-        if effective_rotation_action > 0 and not is_low_power: # Action 0 is no torque
-            if smoothing_state['rotation_timer'] <= 0: # Start new rotation
-                smoothing_state['target_rotation_action'] = effective_rotation_action
-                smoothing_state['rotation_timer'] = MIN_ROTATION_DURATION
-        
-        if smoothing_state['rotation_timer'] > 0:
-            smoothing_state['rotation_timer'] -= 1
-            if is_low_power:
-                smoothing_state['rotation_timer'] = 0 # Stop rotation if low power
-        
-        if smoothing_state['rotation_timer'] <= 0:
-            smoothing_state['target_rotation_action'] = 0
-
-        # Update current_rotation_ramp (0.0 to 1.0)
-        if smoothing_state['target_rotation_action'] > 0 and not is_low_power: # Ramp Up
-            rotation_ramp_progress_up = min(1.0, (MIN_ROTATION_DURATION - smoothing_state['rotation_timer']) / max(1, ROTATION_RAMP_TIME))
-            smoothing_state['current_rotation_ramp'] = rotation_ramp_progress_up
-        else: # Ramp Down
-            decrement_step = 1.0 / max(1, ROTATION_RAMP_TIME) # Ramp from 1.0 to 0.0 in RAMP_TIME steps
-            smoothing_state['current_rotation_ramp'] = max(0.0, smoothing_state['current_rotation_ramp'] - decrement_step)
-
-        # Apply actual torque
-        actual_torque_applied = 0.0
-        if smoothing_state['current_rotation_ramp'] > 0.01 and smoothing_state['target_rotation_action'] > 0 and not is_low_power:
-            base_torque_magnitude = 0.0
-            target_action = smoothing_state['target_rotation_action'] # 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
-            
-            if target_action == 1: base_torque_magnitude = -TORQUE_MAGNITUDES[1]
-            elif target_action == 2: base_torque_magnitude = -TORQUE_MAGNITUDES[2]
-            elif target_action == 3: base_torque_magnitude = TORQUE_MAGNITUDES[1]
-            elif target_action == 4: base_torque_magnitude = TORQUE_MAGNITUDES[2]
-            
-            actual_torque_applied = base_torque_magnitude * smoothing_state['current_rotation_ramp']
-
-            if abs(actual_torque_applied) > 1e-4: # Apply if significant
-                angular_acceleration = actual_torque_applied / MOMENT_OF_INERTIA
-                probe['angular_velocity'] += angular_acceleration
-                
-                energy_cost_rotation = abs(actual_torque_applied) * ROTATIONAL_ENERGY_COST_FACTOR
-                probe['energy'] = max(0, probe['energy'] - energy_cost_rotation)
-                reward -= energy_cost_rotation * 0.01
-        
-        # --- Target Selection Logic --- (Using raw_target_select_action)
-            can_switch_target = (self.step_count - probe.get('last_target_switch_time', 0)) >= TARGET_SWITCH_COOLDOWN
-            
-            if raw_target_select_action == 0: # Action to clear target
-                if probe.get('current_target_id') is not None: # If there was an active target
-                    probe['last_target_switch_time'] = self.step_count # Clearing a target also counts as a switch for cooldown
-                probe['selected_target_info'] = None
-                probe['distance_to_target_last_step'] = float('inf')
-                probe['current_target_id'] = None
-                probe['has_reached_current_target'] = False # Reset flag when target is cleared
-            elif raw_target_select_action > 0: # Action to select a new target
-                target_idx_in_observed_list = raw_target_select_action - 1
-                
-                observed_resource_distances = []
-                for r_idx, resource in enumerate(self.resources):
-                    if resource.amount > 0:
-                        dist = self._distance(probe['position'], resource.position)
-                        # Store the actual resource index (r_idx) as 'id'
-                        observed_resource_distances.append({'dist': dist, 'id': r_idx, 'world_pos': resource.position})
-                observed_resource_distances.sort(key=lambda r: r['dist'])
-
-                if target_idx_in_observed_list < len(observed_resource_distances) and \
-                   target_idx_in_observed_list < NUM_OBSERVED_RESOURCES_FOR_TARGETING:
-                    
-                    selected_res_info = observed_resource_distances[target_idx_in_observed_list]
-                    new_target_resource_id = selected_res_info['id'] # This is the actual index in self.resources
-
-                    # Check if switching to a *different* target
-                    if new_target_resource_id != probe.get('current_target_id'):
-                        if can_switch_target:
-                            probe['energy'] = max(0, probe['energy'] - TARGET_SWITCH_ENERGY_COST)
-                            reward -= TARGET_SWITCH_ENERGY_COST * 0.1 # Small penalty for switching
-                            probe['selected_target_info'] = {
-                                'type': 'resource', 'id': new_target_resource_id, # Store actual resource ID
-                                'world_pos': selected_res_info['world_pos']
-                            }
-                            probe['distance_to_target_last_step'] = selected_res_info['dist']
-                            probe['current_target_id'] = new_target_resource_id
-                            probe['last_target_switch_time'] = self.step_count
-                            probe['has_reached_current_target'] = False # Reset flag when new target is selected
-                        else:
-                            # Cannot switch yet (cooldown active), so no change to target, maybe a small penalty
-                            reward -= 0.05 # Small penalty for attempting to switch during cooldown
-                            pass # Target remains unchanged
-                    else:
-                        # Re-selecting the same target, no cost/cooldown, just update info if needed
-                        probe['selected_target_info'] = {
-                            'type': 'resource', 'id': new_target_resource_id,
-                            'world_pos': selected_res_info['world_pos']
-                        }
-                        probe['distance_to_target_last_step'] = selected_res_info['dist']
-                        # probe['current_target_id'] is already new_target_resource_id
-                else:
-                    # Invalid target selection index, clear target
-                    if probe.get('current_target_id') is not None:
-                         probe['last_target_switch_time'] = self.step_count
-                    probe['selected_target_info'] = None
-                    probe['distance_to_target_last_step'] = float('inf')
-                    probe['current_target_id'] = None
-                    probe['has_reached_current_target'] = False # Reset flag
-        
-        # --- Communication --- (Using raw_communicate_action)
-        if raw_communicate_action > 0 and not is_low_power:
-            reward += self._handle_communication(probe_id)
-        
-        # --- Replication --- (Using raw_replicate_action)
-        if raw_replicate_action > 0 and probe['energy'] > REPLICATION_MIN_ENERGY and not is_low_power:
-            reward += self._handle_replication(probe_id)
-        
-        # --- Standard Rewards & State Updates ---
-        reward += 0.1 # Survival reward
-        
-        grid_pos = (int(probe['position'][0] // 50), int(probe['position'][1] // 50))
-        if grid_pos not in probe['visited_positions']:
-            probe['visited_positions'].add(grid_pos)
-            reward += 1.0 # Exploration reward
-        
-        for res_idx, resource_node in enumerate(self.resources):
-            if resource_node.amount > 0 and res_idx not in probe['discovered_resources']:
-                dist_to_resource = self._distance(probe['position'], resource_node.position)
-                if dist_to_resource < DISCOVERY_RANGE:
-                    probe['discovered_resources'].add(res_idx)
-                    # Value-Based Resource Discovery
-                    reward += RESOURCE_DISCOVERY_REWARD_FACTOR * resource_node.amount
-        
-        if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
-            target_world_pos = probe['selected_target_info']['world_pos']
-            current_distance_to_target = self._distance(probe['position'], target_world_pos)
-            
-            if probe['distance_to_target_last_step'] != float('inf'):
-                distance_delta = probe['distance_to_target_last_step'] - current_distance_to_target
-                if distance_delta > 0: # If moved closer
-                    # Non-linear reward: reward increases as 1/(distance + falloff)
-                    # This means the reward for the *same* distance_delta is higher when closer.
-                    # Ensure current_distance_to_target is not zero or too small to cause extreme rewards.
-                    # PROXIMITY_REWARD_FALLOFF helps prevent division by zero and tunes the curve.
-                    # A smaller PROXIMITY_REWARD_FALLOFF makes the reward spike more sharply at close distances.
-                    # max(0.1, current_distance_to_target) prevents division by zero if distance is 0.
-                    proximity_bonus_factor = (1.0 / (max(0.1, current_distance_to_target) + PROXIMITY_REWARD_FALLOFF))
-                    
-                    # The reward is the distance covered, scaled by the base factor, and then amplified by the proximity bonus.
-                    # The (1 + proximity_bonus_factor * 5.0) term means the bonus can significantly increase the reward.
-                    # Adjust the '5.0' to control the strength of the non-linear effect.
-                    reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR * (1 + proximity_bonus_factor * 5.0)
-                elif distance_delta < 0: # Moved away from target
-                    # Penalty for Moving Away from Target
-                    reward -= abs(distance_delta) * MOVE_AWAY_FROM_TARGET_PENALTY_FACTOR
-            
-            # Reward for Reaching Target (one-time bonus)
-            if not probe.get('has_reached_current_target', False) and current_distance_to_target < HARVEST_DISTANCE:
-                reward += REACH_TARGET_BONUS
-                probe['has_reached_current_target'] = True
-                
-            probe['distance_to_target_last_step'] = current_distance_to_target
-
-        reward += self._handle_resource_collection(probe_id) # Resource collection
-        
-        probe['age'] += 1
-        probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE)
-
-        # Energy Management Incentives
-        if probe['energy'] > MAX_ENERGY * HIGH_ENERGY_THRESHOLD:
-            reward += HIGH_ENERGY_REWARD_BONUS
-
-        # Stronger 'Stay Alive' Signal
-        if probe['energy'] > MAX_ENERGY * CRITICAL_ENERGY_THRESHOLD and probe['energy'] > 0:
-            reward += STAY_ALIVE_REWARD_BONUS
-        
-        # --- DEBUG MODE: Energy Reset ---
-        if DEBUG_MODE and probe['energy'] <= 0:
-            probe['energy'] = DEBUG_ENERGY_RESET_VALUE
-            # Optional: Could add a visual cue or print statement here if needed for debugging
-            
-        probe['total_reward'] += reward
-        
-        return reward
-    
-    def _handle_communication(self, probe_id: int) -> float:
-        """Handle probe communication"""
-        probe = self.probes[probe_id]
-        
-        # Find best resource to communicate
-        best_resource = None
-        best_dist = float('inf')
-        
-        for resource in self.resources:
-            if resource.amount > 10:  # Only communicate about substantial resources
-                dist = self._distance(probe['position'], resource.position)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_resource = resource
-        
-        if best_resource:
-            message = Message(
-                sender_id=probe_id,
-                msg_type='RESOURCE_LOCATION',
-                position=best_resource.position,
-                resource_amount=best_resource.amount,
-                timestamp=self.step_count
-            )
-            self.messages.append(message)
-            return 2.0  # Communication reward
-        
-        return 0.0
-    
-    def _handle_replication(self, probe_id: int) -> float:
-        """Handle probe replication"""
-        if len(self.probes) >= MAX_PROBES:
-            return 0.0
-        
-        probe = self.probes[probe_id]
-        # Ensure replication cost doesn't take energy below 0, though REPLICATION_MIN_ENERGY check should prevent issues
-        probe['energy'] = max(0, probe['energy'] - REPLICATION_COST)
-        
-        # Create new probe
-        new_id = self.max_probe_id + 1
-        new_pos = probe['position'] + np.random.normal(0, 20, 2)
-        new_pos = self._wrap_position(new_pos)
-        
-        self.add_probe(new_id, new_pos, INITIAL_ENERGY, probe['generation'] + 1)
-        
-        return 20.0  # Large replication reward
-    
-    def _handle_resource_collection(self, probe_id: int) -> float:
-        """Handle resource collection for a probe"""
-        probe = self.probes[probe_id]
-        reward = 0.0
-        
-        for resource in self.resources:
-            dist = self._distance(probe['position'], resource.position)
-            if dist < HARVEST_DISTANCE and resource.amount > 0:
-                harvested = resource.harvest(HARVEST_RATE)
-                self.total_resources_mined += harvested
-                probe['energy'] = min(MAX_ENERGY, probe['energy'] + harvested)
-                reward += harvested * 5.0  # Resource collection reward (base)
-                
-                # Sustained Mining Incentive
-                # Check if the currently harvested resource is the probe's selected target
-                selected_target_info = probe.get('selected_target_info')
-                if selected_target_info and selected_target_info.get('type') == 'resource':
-                    # Assuming resource objects themselves are not directly stored as IDs,
-                    # we might need to compare positions or have a unique ID for resources if not using index.
-                    # For now, let's assume selected_target_info['id'] is the index of the resource in self.resources
-                    # This requires ensuring selected_target_info['id'] is indeed the index.
-                    # A safer way if resource objects can change order or are not indexed directly:
-                    # Compare resource.position with selected_target_info['world_pos']
-                    if np.array_equal(resource.position, selected_target_info['world_pos']):
-                         reward += SUSTAINED_MINING_REWARD_PER_STEP
-
-                probe['is_mining_visual'] = True
-                probe['mining_target_pos_visual'] = resource.position
-        
-        return reward
-    
-    def _update_physics(self):
-        """Ultra-smooth physics with enhanced stability"""
-        for probe_id, probe in self.probes.items():
-            if not probe['alive']:
-                continue
-
-            # ENHANCED ROTATIONAL PHYSICS
-            # Store previous angular velocity for smooth integration
-            # prev_angular_vel = probe['angular_velocity'] # Not directly used in the provided replacement
-            
-            # Update angle with sub-step integration for smoothness
-            dt = 1.0  # Time step
-            probe['angle'] = (probe['angle'] + probe['angular_velocity'] * dt) % (2 * np.pi)
-            
-            # Progressive angular damping (stronger at higher speeds)
-            speed_factor_angular = abs(probe['angular_velocity']) / MAX_ANGULAR_VELOCITY if MAX_ANGULAR_VELOCITY > 1e-6 else 0
-            adaptive_damping = ANGULAR_DAMPING_FACTOR * (0.3 + 0.7 * speed_factor_angular)
-            probe['angular_velocity'] *= (1 - adaptive_damping)
-            
-            # Smooth angular velocity limiting
-            if abs(probe['angular_velocity']) > MAX_ANGULAR_VELOCITY:
-                sign = np.sign(probe['angular_velocity'])
-                excess = abs(probe['angular_velocity']) - MAX_ANGULAR_VELOCITY
-                # Gently nudge back towards MAX_ANGULAR_VELOCITY instead of hard clip or proportional reduction
-                probe['angular_velocity'] = sign * (MAX_ANGULAR_VELOCITY + excess * 0.1)
-
-            # ENHANCED LINEAR PHYSICS
-            # Store previous velocity for smoothing
-            # prev_velocity = probe['velocity'].copy() # Not directly used in the provided replacement
-            
-            # Update position with enhanced integration
-            probe['position'] += probe['velocity'] * dt
-            probe['position'] = self._wrap_position(probe['position'])
-            
-            # ULTRA-SOFT VELOCITY LIMITING with exponential decay
-            velocity_magnitude = np.linalg.norm(probe['velocity'])
-            if velocity_magnitude > MAX_VELOCITY:
-                if MAX_VELOCITY > 1e-6:
-                    # Exponential approach to max velocity
-                    excess_ratio = velocity_magnitude / MAX_VELOCITY
-                    # Decay factor should be < 1 if excess_ratio > 1
-                    decay_factor = 1.0 / (1.0 + (excess_ratio - 1.0) * 0.05)
-                    probe['velocity'] *= decay_factor
-            
-            # ADAPTIVE SPACE FRICTION (varies with velocity)
-            speed_factor_linear = velocity_magnitude / MAX_VELOCITY if MAX_VELOCITY > 1e-6 else 0
-            adaptive_friction = 0.9998 + (0.9995 - 0.9998) * speed_factor_linear
-            probe['velocity'] *= adaptive_friction
-    
-    def _regenerate_resources(self):
-        """Regenerate resources over time"""
-        for resource in self.resources:
-            resource.regenerate()
-    
-    def _cleanup_old_messages(self):
-        """Remove old messages"""
-        self.messages = [msg for msg in self.messages 
-                        if self.step_count - msg.timestamp < 50]
-    
-    def _distance(self, pos1, pos2):
-        """Calculate distance between two positions with wraparound"""
-        dx = abs(pos1[0] - pos2[0])
-        dy = abs(pos1[1] - pos2[1])
-        
-        # Handle wraparound
-        dx = min(dx, self.world_width - dx)
-        dy = min(dy, self.world_height - dy)
-        
-        return np.sqrt(dx*dx + dy*dy)
-    
-    def _wrap_position(self, position: np.ndarray) -> np.ndarray:
-        """Clamps the position to the world boundaries."""
-        position[0] = np.clip(position[0], 0, self.world_width)
-        position[1] = np.clip(position[1], 0, self.world_height)
-        return position
-    
     def reset(self):
-        """Reset the environment"""
+        self.step_count = 0
         self.probes = {}
         self.messages = []
-        self.step_count = 0
-        self.max_probe_id = 0
         self._generate_resources()
-        
-        # Add initial probes
-        for i in range(INITIAL_PROBES):
-            pos = (random.uniform(0, self.world_width),
-                   random.uniform(0, self.world_height))
-            self.add_probe(i, pos)
-        
-        # Return initial observations
-        observations = {}
-        for probe_id in self.probes:
-            observations[probe_id] = self.get_observation(probe_id)
-        
-        return observations
-class SolarSystemEnvironment(SpaceEnvironment): # Or gym.Env if SpaceEnvironment is not suitable base
+        # Add initial probes if needed by the simulation logic
+        # self.add_probe(0, (self.world_width / 2, self.world_height / 2))
+        # obs = {}
+        # if 0 in self.probes:
+        #    obs[0] = self.get_observation(0)
+        # return obs
+        return {} # Return empty dict if no probes are managed by default
+
+# Your new SolarSystemEnvironment class:
+class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially simplified) SpaceEnvironment
     def __init__(self):
-        # Call super().__init__() from SpaceEnvironment if inheriting its probe/resource logic
-        # If starting fresh as a gym.Env, then super(SolarSystemEnvironment, self).__init__()
-        super().__init__() # Assumes SpaceEnvironment sets up basic world_width, action/obs spaces etc.
+        super().__init__() # Calls SpaceEnvironment.__init__
 
         self.orbital_mechanics = OrbitalMechanics()
         self.sun: Optional[CelestialBody] = None
-        self.planets: List[CelestialBody] = []
-        
-        # Override world size from new config
-        self.world_width = WORLD_SIZE
-        self.world_height = WORLD_SIZE
+        self.planets: List[CelestialBody] = [] # Includes Earth's Moon
+        # self.asteroid_belt: Optional[AsteroidBelt] = None # Commented out for now
 
         self._create_celestial_bodies()
-
-        # Observation and action space might need redefinition or adjustment
-        # For Phase 1, we can assume they are compatible or will be adjusted later.
-        # If SpaceEnvironment's obs/action space is probe-centric, it might be fine.
-        # self.observation_space = ...
-        # self.action_space = ...
+        # if self.orbital_mechanics: # AsteroidBelt commented out
+        #     self.asteroid_belt = AsteroidBelt(self.orbital_mechanics)
 
     def _create_celestial_bodies(self):
-        self.planets = []
-        for name, data in PLANET_DATA.items():
-            initial_pos_sim = np.array([0.0, 0.0], dtype=np.float64)
-            initial_vel_sim_s = np.array([0.0, 0.0], dtype=np.float64) # sim_units / second
+        self.planets = [] # Clear previous planets
+        sun_config_data = PLANET_DATA['Sun']
+        self.sun = CelestialBody(
+            name="Sun",
+            mass_kg=sun_config_data['mass_kg'],
+            radius_km=sun_config_data['radius_km'],
+            display_radius_sim=sun_config_data['display_radius_sim'],
+            color=sun_config_data['color'],
+            a_au=sun_config_data['semi_major_axis_au'],
+            e=sun_config_data['eccentricity'],
+            i_deg=sun_config_data['inclination_deg'],
+            omega_deg=sun_config_data['longitude_of_ascending_node_deg'],
+            w_deg=sun_config_data['argument_of_perihelion_deg'],
+            m0_deg=sun_config_data['mean_anomaly_at_epoch_deg'],
+            position_sim=np.array(SUN_POSITION_SIM, dtype=np.float64),
+            velocity_sim_s=np.array([0.0, 0.0], dtype=np.float64),
+            orbits_around=None
+        )
+        if DEBUG_ORBITAL_MECHANICS:
+            print(f"DEBUG: Created Sun: Name={self.sun.name}, Pos_sim={self.sun.position_sim}, Vel_sim_s={self.sun.velocity_sim_s}")
 
-            if name == "Sun":
-                # Sun is at SUN_POSITION, zero velocity relative to system origin
-                initial_pos_sim = np.array(SUN_POSITION, dtype=np.float64)
-                # Velocity is already [0,0] by default from PLANET_DATA['Sun']['initial_vel_au_day']
-            else:
-                # Use OrbitalMechanics to calculate initial state vectors
-                # calculate_initial_state_vector returns pos in AU and vel in AU/second
-                true_anomaly_rad = 0.0 # Start at perihelion for simplicity, or randomize
-                pos_au, vel_au_s = self.orbital_mechanics.calculate_initial_state_vector(
-                    data['semi_major_axis_au'],
-                    data['eccentricity'],
-                    true_anomaly_rad,
-                    SUN_MASS_KG # SUN_MASS_KG is defined in config.py
-                )
+        # Create planets (Mercury, Venus, Earth, Mars)
+        planet_names = ["Mercury", "Venus", "Earth", "Mars"]
+        earth_body = None # To store Earth for Moon's calculation
 
-                # Convert position from AU (relative to Sun) to simulation units (world coordinates)
-                # pos_au is [x_au, y_au] relative to Sun.
-                # Multiply by AU_SCALE to get sim_units relative to Sun.
-                # Add SUN_POSITION to get world coordinates.
-                initial_pos_sim = pos_au * AU_SCALE + np.array(SUN_POSITION, dtype=np.float64)
-                
-                # Convert velocity from AU/second to simulation_units/second
-                # vel_au_s is [vx_au_s, vy_au_s]
-                # Multiply by AU_SCALE to get sim_units/second
-                initial_vel_sim_s = vel_au_s * AU_SCALE
-
-            body = CelestialBody(
+        for name in planet_names:
+            data = PLANET_DATA[name]
+            planet_body = CelestialBody(
                 name=name,
                 mass_kg=data['mass_kg'],
-                position=initial_pos_sim,
-                velocity=initial_vel_sim_s,
-                radius_sim=data['radius_sim'],
+                radius_km=data['radius_km'],
+                display_radius_sim=data['display_radius_sim'],
                 color=data['color'],
-                semi_major_axis_au=data.get('semi_major_axis_au', 0.0),
-                eccentricity=data.get('eccentricity', 0.0),
-                orbital_period_days=data.get('orbital_period_days', 0.0),
-                inclination_deg=data.get('inclination_deg', 0.0)
+                a_au=data['semi_major_axis_au'],
+                e=data['eccentricity'],
+                i_deg=data['inclination_deg'],
+                omega_deg=data['longitude_of_ascending_node_deg'],
+                w_deg=data['argument_of_perihelion_deg'],
+                m0_deg=data['mean_anomaly_at_epoch_deg'],
+                orbits_around="Sun" # Explicitly orbits Sun
             )
-            if name == "Sun":
-                self.sun = body
-            else:
-                self.planets.append(body)
-        
-        # Ensure Sun is not in planets list if it was added there due to iteration order
-        self.planets = [p for p in self.planets if p.name != "Sun"]
-        if self.sun is None and "Sun" in PLANET_DATA:
-             # This case should ideally not happen if Sun is processed correctly above
-            print("Warning: Sun was not set directly, attempting to find from PLANET_DATA again.")
-            sun_data = PLANET_DATA["Sun"]
-            self.sun = CelestialBody(name="Sun", mass_kg=sun_data['mass_kg'], 
-                                     position=np.array(SUN_POSITION, dtype=np.float64), 
-                                     velocity=np.array([0,0], dtype=np.float64), # Sun's velocity from its own data
-                                     radius_sim=sun_data['radius_sim'], color=sun_data['color'])
+            
+            pos_rel_sun_sim, vel_rel_sun_sim_s = self.orbital_mechanics.calculate_initial_state_vector(
+                planet_body, self.sun.mass_kg
+            )
+            
+            planet_body.position_sim = np.array(SUN_POSITION_SIM, dtype=np.float64) + pos_rel_sun_sim
+            planet_body.velocity_sim_s = vel_rel_sun_sim_s # Sun's velocity is [0,0]
+
+            self.planets.append(planet_body)
+            if name == "Earth":
+                earth_body = planet_body
+            
+            if DEBUG_ORBITAL_MECHANICS:
+                pos_au = planet_body.position_sim / AU_SCALE
+                vel_au_s = planet_body.velocity_sim_s / AU_SCALE # This was AU_SCALE before, but velocity is per second.
+                # Assuming velocity_sim_s is already in sim_units/s, so dividing by AU_SCALE gives AU/s.
+                print(f"DEBUG: Created {name}: Pos_sim=[{pos_au[0]:.3f}, {pos_au[1]:.3f}] AU, Vel_sim_s=[{vel_au_s[0]:.3f}, {vel_au_s[1]:.3f}] AU/s")
+
+        # Create Moon (orbiting Earth)
+        if earth_body and 'Moon' in PLANET_DATA:
+            moon_data = PLANET_DATA['Moon']
+            moon_body = CelestialBody(
+                name="Moon",
+                mass_kg=moon_data['mass_kg'],
+                radius_km=moon_data['radius_km'],
+                display_radius_sim=moon_data['display_radius_sim'],
+                color=moon_data['color'],
+                a_au=moon_data['semi_major_axis_au'], # Relative to Earth
+                e=moon_data['eccentricity'],
+                i_deg=moon_data['inclination_deg'],
+                omega_deg=moon_data['longitude_of_ascending_node_deg'],
+                w_deg=moon_data['argument_of_perihelion_deg'],
+                m0_deg=moon_data['mean_anomaly_at_epoch_deg'],
+                orbits_around="Earth"
+            )
+
+            pos_rel_earth_sim, vel_rel_earth_sim_s = self.orbital_mechanics.calculate_initial_state_vector(
+                moon_body, earth_body.mass_kg # Moon orbits Earth
+            )
+
+            # Convert Moon's relative state vector to absolute (world) coordinates
+            moon_body.position_sim = earth_body.position_sim + pos_rel_earth_sim
+            moon_body.velocity_sim_s = earth_body.velocity_sim_s + vel_rel_earth_sim_s
+            
+            self.planets.append(moon_body) # Add Moon to the list of bodies
+            if DEBUG_ORBITAL_MECHANICS:
+                pos_au_moon = moon_body.position_sim / AU_SCALE
+                vel_au_s_moon = moon_body.velocity_sim_s / AU_SCALE # Assuming velocity_sim_s is sim_units/s
+                print(f"DEBUG: Created Moon: Pos_sim=[{pos_au_moon[0]:.4f}, {pos_au_moon[1]:.4f}] AU, Vel_sim_s=[{vel_au_s_moon[0]:.4f}, {vel_au_s_moon[1]:.4f}] AU/s")
+                rel_pos_au = (moon_body.position_sim - earth_body.position_sim) / AU_SCALE
+                print(f"DEBUG: Moon initial pos rel Earth: [{rel_pos_au[0]:.4f}, {rel_pos_au[1]:.4f}] AU, dist: {np.linalg.norm(rel_pos_au):.4f} AU (target ~{moon_data['semi_major_axis_au']:.4f} AU)")
 
 
     def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
-        # First, update celestial body positions
-        if self.sun: # Ensure sun is initialized
+        if self.sun:
+            # The update_celestial_body_positions method in solarsystem.py now handles
+            # planets and the moon correctly based on their 'orbits_around' attribute.
+            # It takes all planets (which includes the Moon) and the Sun.
             self.orbital_mechanics.update_celestial_body_positions(
-                self.planets, 
-                self.sun.mass_kg, 
+                self.planets, # This list includes planets and the Moon
+                self.sun,
                 SIM_SECONDS_PER_STEP
             )
         
-        # Then, call the parent's step method to handle probes, resources, etc.
-        # The parent step will call _update_physics, _regenerate_resources, etc.
-        # Probe physics in SpaceEnvironment._update_physics does not yet include gravity from celestial bodies.
-        observations, rewards, dones, infos = super().step(actions)
+        if DEBUG_ORBITAL_MECHANICS and self.step_count % 100 == 0 and self.sun:
+            for body in self.planets + [self.sun]: # Iterate over Sun and all planets (incl. Moon)
+                if body.name == "Sun":
+                    pos_au_sun_debug = body.position_sim / AU_SCALE
+                    print(f"Step {self.step_count}: Sun - Pos: [{pos_au_sun_debug[0]:.3f}, {pos_au_sun_debug[1]:.3f}] AU")
+                    continue
+
+                # Calculate distance from its central body
+                central_body = None
+                if body.orbits_around == "Sun":
+                    central_body = self.sun
+                elif body.orbits_around == "Earth":
+                    central_body = next((p for p in self.planets if p.name == "Earth"), None)
+                
+                if central_body:
+                    distance_vector_sim = body.position_sim - central_body.position_sim
+                    distance_au = np.linalg.norm(distance_vector_sim) / AU_SCALE
+                    speed_au_s = np.linalg.norm(body.velocity_sim_s) / AU_SCALE
+                    
+                    pos_au_step_debug = body.position_sim / AU_SCALE
+                    print(f"Step {self.step_count}: {body.name} - "
+                          f"Pos_AU: [{pos_au_step_debug[0]:.3f}, {pos_au_step_debug[1]:.3f}], "
+                          f"Dist_to_{central_body.name}: {distance_au:.4f} AU (a={body.a_au:.4f}), "
+                          f"Speed_AU/s: {speed_au_s:.4f}")
         
-        # Any additional logic for SolarSystemEnvironment after parent step
-        # For example, checking for collisions with planets (future phase)
+        observations, rewards, dones, infos = super().step(actions)
+        # self.step_count is incremented by super().step() if it's a standard gym env
+        # If not, uncomment: self.step_count +=1
         
         return observations, rewards, dones, infos
 
-    def reset(self) -> Dict[int, np.ndarray]: # Return type matches typical gym multi-agent or wrapped env
-        # Reset celestial bodies to their initial states
+    def reset(self) -> Dict[int, np.ndarray]:
+        # self.step_count is reset by super().reset()
         self._create_celestial_bodies()
+        # if self.asteroid_belt: # AsteroidBelt commented out
+        #     self.asteroid_belt.asteroids.clear()
+        #     self.asteroid_belt.generate_asteroids()
         
-        # Call parent's reset to handle probes, resources, step_count etc.
-        # Super().reset() in SpaceEnvironment returns initial observations for probes.
         initial_observations = super().reset()
-        
-        # If the super().reset() doesn't return observations (e.g. if it's a simple reset_model type)
-        # then we might need to generate initial observations here after reset.
-        # Assuming SpaceEnvironment.reset() correctly returns initial observations.
         return initial_observations
 
     def get_celestial_bodies_data_for_render(self) -> List[Dict]:
-        """Returns a list of dictionaries, each containing data for rendering a celestial body."""
         render_data = []
         if self.sun:
             render_data.append({
                 'name': self.sun.name,
-                'position': self.sun.position.tolist(), # Convert numpy array to list for easier JSON/Pygame use
-                'radius_sim': self.sun.radius_sim,
+                'position': self.sun.position_sim.tolist(), # Use position_sim
+                'radius_sim': self.sun.display_radius_sim, # Use display_radius_sim
                 'color': self.sun.color
             })
-        for planet in self.planets:
+        for planet_body in self.planets: # Renamed to avoid conflict
             render_data.append({
-                'name': planet.name,
-                'position': planet.position.tolist(),
-                'radius_sim': planet.radius_sim,
-                'color': planet.color
+                'name': planet_body.name,
+                'position': planet_body.position_sim.tolist(), # Use position_sim
+                'radius_sim': planet_body.display_radius_sim, # Use display_radius_sim
+                'color': planet_body.color
             })
+        
+        # if self.asteroid_belt: # AsteroidBelt commented out
+        #     for asteroid in self.asteroid_belt.asteroids:
+        #         render_data.append({
+        #             'name': asteroid.name,
+        #             'position': asteroid.position_sim.tolist(),
+        #             'radius_sim': asteroid.display_radius_sim,
+        #             'color': asteroid.color
+        #         })
         return render_data
-
-    # Override _generate_resources if resource placement needs to be aware of the solar system (e.g. not inside sun)
-    # For Phase 1, default resource generation from SpaceEnvironment is fine.
-    # def _generate_resources(self):
-    #     super()._generate_resources() # or custom logic
-    #     # Example: ensure resources are not too close to the Sun
-    #     if self.sun:
-    #         for res in self.resources:
-    #             dist_to_sun = self._distance(res.position, self.sun.position)
-    #             # Define a safe distance, e.g., Sun's radius_sim + buffer
-    #             safe_dist = self.sun.radius_sim * 1.5 
-    #             while dist_to_sun < safe_dist:
-    #                 res.position = (random.uniform(0, self.world_width), 
-    #                                 random.uniform(0, self.world_height))
-    #                 dist_to_sun = self._distance(res.position, self.sun.position)
-
-    # The render() method itself is usually handled by the Visualization class.
-    # This environment can provide data for rendering.
-    # If SpaceEnvironment has a render method that needs overriding:
-    # def render(self, mode='human'):
-    #     # super().render(mode) # If SpaceEnvironment.render() does something useful for probes
-    #     # Add rendering for celestial bodies if direct rendering happens here.
-    #     # Typically, the main simulation loop calls a separate visualizer.
-    #     pass
