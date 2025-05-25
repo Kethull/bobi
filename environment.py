@@ -46,12 +46,12 @@ class SpaceEnvironment(gym.Env):
         # Observation space for each probe
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(19,),  # pos(2) + vel(2) + energy(1) + age(1) + resources(9) + probes(4) + messages(1)
+            shape=(OBSERVATION_SPACE_SIZE,), # Uses constant from config.py
             dtype=np.float32
         )
         
-        # Action space: [thrust_dir(9), thrust_power(3), communicate(2), replicate(2)]
-        self.action_space = spaces.MultiDiscrete([9, 3, 2, 2])
+        # Action space: [thrust_dir, thrust_power, communicate, replicate, target_select]
+        self.action_space = spaces.MultiDiscrete(ACTION_SPACE_DIMS) # Uses constant from config.py
         
     def _generate_resources(self):
         self.resources = []
@@ -78,16 +78,18 @@ class SpaceEnvironment(gym.Env):
             'thrust_power_visual': 0,     # For visualization
             'is_mining_visual': False,    # For mining laser visualization
             'mining_target_pos_visual': None, # For mining laser visualization
-            'discovered_resources': set() # For resource discovery reward
+            'discovered_resources': set(), # For resource discovery reward
+            'selected_target_info': None, # For target selection: {'type': 'resource', 'id': res_idx, 'world_pos': (x,y)}
+            'distance_to_target_last_step': float('inf') # For target proximity reward
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
     def get_observation(self, probe_id: int) -> np.ndarray:
         """Get observation for a specific probe"""
         probe = self.probes[probe_id]
-        obs = np.zeros(19, dtype=np.float32)
+        obs = np.zeros(OBSERVATION_SPACE_SIZE, dtype=np.float32) # Use constant
         
-        # Own state (6 values)
+        # Own state (6 values) - Indices 0-5
         obs[0:2] = probe['position'] / np.array([self.world_width, self.world_height])
         obs[2:4] = probe['velocity'] / MAX_VELOCITY
         obs[4] = probe['energy'] / MAX_ENERGY
@@ -101,7 +103,8 @@ class SpaceEnvironment(gym.Env):
                 resource_distances.append((dist, i))
         
         resource_distances.sort()
-        for i in range(3):
+        # Nearest NUM_OBSERVED_RESOURCES_FOR_TARGETING resources (default 3*3=9 values) - Indices 6-14
+        for i in range(NUM_OBSERVED_RESOURCES_FOR_TARGETING):
             base_idx = 6 + i * 3
             if i < len(resource_distances):
                 _, res_idx = resource_distances[i]
@@ -120,8 +123,9 @@ class SpaceEnvironment(gym.Env):
             probe_distances.append((dist, other_id))
         
         probe_distances.sort()
-        for i in range(2):
-            base_idx = 15 + i * 2
+        # Nearest 2 other probes (2*2=4 values) - Indices 15-18
+        for i in range(2): # Assuming we always observe 2 other probes if available
+            base_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + i * 2 # Adjusted base_idx
             if i < len(probe_distances):
                 _, other_id = probe_distances[i]
                 other_probe = self.probes[other_id]
@@ -134,8 +138,44 @@ class SpaceEnvironment(gym.Env):
         recent_messages = [msg for msg in self.messages 
                           if self.step_count - msg.timestamp < 10 and
                           self._distance(probe['position'], msg.position) < COMM_RANGE]
-        obs[18] = min(len(recent_messages) / 5.0, 1.0)  # Normalize message count
+        obs[6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 2 * 2] = min(len(recent_messages) / 5.0, 1.0)  # Message count - Index 19
         
+        # Target information (3 values) - Indices 20-22 (or 19-21 if OBS_SIZE is 22)
+        # Correcting indices based on OBS_SIZE = 22:
+        # Own state: 0-5 (6)
+        # Resources: 6-14 (9) (assuming NUM_OBSERVED_RESOURCES_FOR_TARGETING = 3)
+        # Other Probes: 15-18 (4)
+        # Messages: 19 (1)
+        # Target Active: 20 (1)
+        # Target Rel Pos: 21-22 (2) -> This makes it 23. Let's adjust.
+        # OBS_SIZE = 22 means indices 0-21.
+        # Messages will be at index 19.
+        # Target Active at 20. Target Rel Pos at 21, 22 is not possible.
+        # Let's make Target Rel Pos use 2 slots, so OBS_SIZE should be 19 (current) + 1 (target_active) + 2 (target_rel_pos) = 22.
+        # Indices: Messages (18), Target Active (19), Target Rel Pos (20, 21)
+
+        msg_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 2 * 2 # Should be 19
+        obs[msg_idx] = min(len(recent_messages) / 5.0, 1.0)
+
+        target_active_idx = msg_idx + 1 # Should be 20
+        target_rel_pos_idx = msg_idx + 2 # Should be 21 (for x), 22 (for y) - wait, this is wrong.
+                                         # If OBS_SIZE is 22, max index is 21.
+                                         # target_active_idx = 19
+                                         # target_rel_pos_idx_start = 20 (covers 20, 21)
+
+        target_active_idx = 19 # Corrected index for OBS_SIZE = 22
+        target_rel_pos_start_idx = 20 # Corrected index for OBS_SIZE = 22
+
+        if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
+            obs[target_active_idx] = 1.0
+            target_world_pos = probe['selected_target_info']['world_pos']
+            rel_pos_to_target = np.array(target_world_pos) - probe['position']
+            rel_pos_to_target = self._wrap_position(rel_pos_to_target)
+            obs[target_rel_pos_start_idx : target_rel_pos_start_idx+2] = rel_pos_to_target / np.array([self.world_width, self.world_height])
+        else:
+            obs[target_active_idx] = 0.0
+            obs[target_rel_pos_start_idx : target_rel_pos_start_idx+2] = 0.0 # No target, zero out rel_pos
+            
         return obs
     
     def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
@@ -186,11 +226,48 @@ class SpaceEnvironment(gym.Env):
             # Note: Resource collection can still happen passively below
 
         # Parse action (actions might have been overridden if low_power)
-        thrust_dir_actual, thrust_power_actual, communicate_actual, replicate_actual = action
+        # Action space now: [thrust_dir, thrust_power, communicate, replicate, target_select]
+        thrust_dir_actual, thrust_power_actual, communicate_actual, replicate_actual, target_select_action = action
+        
         if is_low_power:
             thrust_dir_actual = 0
             communicate_actual = 0
             replicate_actual = 0
+            # target_select_action remains, but probe won't move towards it if low power.
+            # Or, we can also nullify target selection if low power:
+            # target_select_action = 0 # Optional: clear target if low power
+        
+        # --- Target Selection Logic ---
+        if not is_low_power: # Allow target selection only if not in low power
+            if target_select_action == 0:
+                probe['selected_target_info'] = None
+                probe['distance_to_target_last_step'] = float('inf')
+            elif target_select_action > 0:
+                # Find the (target_select_action)-th nearest resource
+                # This re-queries nearest resources, could be optimized by passing from get_observation if needed
+                observed_resource_distances = []
+                for r_idx, resource in enumerate(self.resources):
+                    if resource.amount > 0:
+                        dist = self._distance(probe['position'], resource.position)
+                        observed_resource_distances.append({'dist': dist, 'id': r_idx, 'world_pos': resource.position})
+                
+                observed_resource_distances.sort(key=lambda r: r['dist'])
+                
+                target_idx_in_observed_list = target_select_action - 1 # 1-based action to 0-based list index
+                if target_idx_in_observed_list < len(observed_resource_distances) and target_idx_in_observed_list < NUM_OBSERVED_RESOURCES_FOR_TARGETING:
+                    selected_res_info = observed_resource_distances[target_idx_in_observed_list]
+                    probe['selected_target_info'] = {
+                        'type': 'resource',
+                        'id': selected_res_info['id'], # Actual index in self.resources
+                        'world_pos': selected_res_info['world_pos']
+                    }
+                    probe['distance_to_target_last_step'] = selected_res_info['dist']
+                    # print(f"Probe {probe_id} targeted resource {selected_res_info['id']} at {selected_res_info['world_pos']}") # Debug
+                else:
+                    # Invalid target selection (e.g., fewer than target_select_action resources available)
+                    # Clear target if selection was invalid
+                    probe['selected_target_info'] = None
+                    probe['distance_to_target_last_step'] = float('inf')
         
         # Apply thrust (Newtonian physics)
         if thrust_dir_actual > 0:  # 0 is no thrust
@@ -238,8 +315,19 @@ class SpaceEnvironment(gym.Env):
                 if dist_to_resource < DISCOVERY_RANGE:
                     probe['discovered_resources'].add(res_idx)
                     reward += RESOURCE_DISCOVERY_REWARD
-                    # print(f"Probe {probe_id} discovered resource {res_idx} at {resource_node.position}") # Optional: for debugging
         
+        # Target Proximity Reward
+        if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
+            target_world_pos = probe['selected_target_info']['world_pos']
+            current_distance_to_target = self._distance(probe['position'], target_world_pos)
+            
+            if probe['distance_to_target_last_step'] != float('inf'): # Avoid reward on first step of targeting
+                distance_delta = probe['distance_to_target_last_step'] - current_distance_to_target
+                if distance_delta > 0: # Got closer
+                    reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR
+            
+            probe['distance_to_target_last_step'] = current_distance_to_target
+
         # Resource collection
         reward += self._handle_resource_collection(probe_id)
         

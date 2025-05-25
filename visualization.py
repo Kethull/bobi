@@ -213,6 +213,24 @@ class Visualization:
                 laser_color = (0, 255, 150) # Bright cyan/green
                 pygame.draw.line(self.screen, laser_color, laser_start_screen_pos, mining_target_screen_pos, 2)
 
+            # Draw target indicator line
+            selected_target_info = probe.get('selected_target_info')
+            if selected_target_info and selected_target_info.get('world_pos') is not None and not is_low_power:
+                target_world_pos = selected_target_info['world_pos']
+                target_screen_pos = self.world_to_screen(target_world_pos)
+                
+                # Line from ship center to target
+                # We can use screen_pos (ship's center) as the start
+                target_line_color = (255, 0, 255, 100) # Magenta, slightly transparent if using alpha
+                
+                # Draw a thicker, perhaps dashed line or a line with a small circle at the target
+                # For simplicity, a magenta line:
+                pygame.draw.line(self.screen, target_line_color, screen_pos, target_screen_pos, 1)
+                
+                # Optionally, draw a small circle at the target resource to highlight it
+                pygame.draw.circle(self.screen, target_line_color, target_screen_pos, 5, 1)
+
+
             # Draw probe ID (adjust position based on spaceship size)
             id_text_color = (150, 150, 150) if is_low_power else (255, 255, 255)
             id_text_content = str(probe_id) + (" (LP)" if is_low_power else "")
