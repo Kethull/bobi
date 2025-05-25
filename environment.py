@@ -6,6 +6,9 @@ import random
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from config import *
+from solarsystem import CelestialBody, OrbitalMechanics
+# Specific config imports (already covered by 'from config import *' but listed for clarity if needed later)
+# from config import SIM_SECONDS_PER_STEP, PLANET_DATA, SUN_MASS_KG, AU_SCALE, SUN_POSITION, WORLD_SIZE
 
 @dataclass
 class Message:
@@ -803,3 +806,157 @@ class SpaceEnvironment(gym.Env):
             observations[probe_id] = self.get_observation(probe_id)
         
         return observations
+class SolarSystemEnvironment(SpaceEnvironment): # Or gym.Env if SpaceEnvironment is not suitable base
+    def __init__(self):
+        # Call super().__init__() from SpaceEnvironment if inheriting its probe/resource logic
+        # If starting fresh as a gym.Env, then super(SolarSystemEnvironment, self).__init__()
+        super().__init__() # Assumes SpaceEnvironment sets up basic world_width, action/obs spaces etc.
+
+        self.orbital_mechanics = OrbitalMechanics()
+        self.sun: Optional[CelestialBody] = None
+        self.planets: List[CelestialBody] = []
+        
+        # Override world size from new config
+        self.world_width = WORLD_SIZE
+        self.world_height = WORLD_SIZE
+
+        self._create_celestial_bodies()
+
+        # Observation and action space might need redefinition or adjustment
+        # For Phase 1, we can assume they are compatible or will be adjusted later.
+        # If SpaceEnvironment's obs/action space is probe-centric, it might be fine.
+        # self.observation_space = ...
+        # self.action_space = ...
+
+    def _create_celestial_bodies(self):
+        self.planets = []
+        for name, data in PLANET_DATA.items():
+            initial_pos_sim = np.array([0.0, 0.0], dtype=np.float64)
+            initial_vel_sim_s = np.array([0.0, 0.0], dtype=np.float64) # sim_units / second
+
+            if name == "Sun":
+                # Sun is at SUN_POSITION, zero velocity relative to system origin
+                initial_pos_sim = np.array(SUN_POSITION, dtype=np.float64)
+                # Velocity is already [0,0] by default from PLANET_DATA['Sun']['initial_vel_au_day']
+            else:
+                # Use OrbitalMechanics to calculate initial state vectors
+                # calculate_initial_state_vector returns pos in AU and vel in AU/second
+                pos_au, vel_au_s = self.orbital_mechanics.calculate_initial_state_vector(
+                    data['semi_major_axis_au'],
+                    SUN_MASS_KG # SUN_MASS_KG is defined in config.py
+                )
+
+                # Convert position from AU (relative to Sun) to simulation units (world coordinates)
+                # pos_au is [x_au, y_au] relative to Sun.
+                # Multiply by AU_SCALE to get sim_units relative to Sun.
+                # Add SUN_POSITION to get world coordinates.
+                initial_pos_sim = pos_au * AU_SCALE + np.array(SUN_POSITION, dtype=np.float64)
+                
+                # Convert velocity from AU/second to simulation_units/second
+                # vel_au_s is [vx_au_s, vy_au_s]
+                # Multiply by AU_SCALE to get sim_units/second
+                initial_vel_sim_s = vel_au_s * AU_SCALE
+
+            body = CelestialBody(
+                name=name,
+                mass_kg=data['mass_kg'],
+                position=initial_pos_sim,
+                velocity=initial_vel_sim_s,
+                radius_sim=data['radius_sim'],
+                color=data['color'],
+                semi_major_axis_au=data.get('semi_major_axis_au', 0.0),
+                eccentricity=data.get('eccentricity', 0.0),
+                orbital_period_days=data.get('orbital_period_days', 0.0),
+                inclination_deg=data.get('inclination_deg', 0.0)
+            )
+            if name == "Sun":
+                self.sun = body
+            else:
+                self.planets.append(body)
+        
+        # Ensure Sun is not in planets list if it was added there due to iteration order
+        self.planets = [p for p in self.planets if p.name != "Sun"]
+        if self.sun is None and "Sun" in PLANET_DATA:
+             # This case should ideally not happen if Sun is processed correctly above
+            print("Warning: Sun was not set directly, attempting to find from PLANET_DATA again.")
+            sun_data = PLANET_DATA["Sun"]
+            self.sun = CelestialBody(name="Sun", mass_kg=sun_data['mass_kg'], 
+                                     position=np.array(SUN_POSITION, dtype=np.float64), 
+                                     velocity=np.array([0,0], dtype=np.float64), # Sun's velocity from its own data
+                                     radius_sim=sun_data['radius_sim'], color=sun_data['color'])
+
+
+    def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
+        # First, update celestial body positions
+        if self.sun: # Ensure sun is initialized
+            self.orbital_mechanics.update_celestial_body_positions(
+                self.planets, 
+                self.sun.mass_kg, 
+                SIM_SECONDS_PER_STEP
+            )
+        
+        # Then, call the parent's step method to handle probes, resources, etc.
+        # The parent step will call _update_physics, _regenerate_resources, etc.
+        # Probe physics in SpaceEnvironment._update_physics does not yet include gravity from celestial bodies.
+        observations, rewards, dones, infos = super().step(actions)
+        
+        # Any additional logic for SolarSystemEnvironment after parent step
+        # For example, checking for collisions with planets (future phase)
+        
+        return observations, rewards, dones, infos
+
+    def reset(self) -> Dict[int, np.ndarray]: # Return type matches typical gym multi-agent or wrapped env
+        # Reset celestial bodies to their initial states
+        self._create_celestial_bodies()
+        
+        # Call parent's reset to handle probes, resources, step_count etc.
+        # Super().reset() in SpaceEnvironment returns initial observations for probes.
+        initial_observations = super().reset()
+        
+        # If the super().reset() doesn't return observations (e.g. if it's a simple reset_model type)
+        # then we might need to generate initial observations here after reset.
+        # Assuming SpaceEnvironment.reset() correctly returns initial observations.
+        return initial_observations
+
+    def get_celestial_bodies_data_for_render(self) -> List[Dict]:
+        """Returns a list of dictionaries, each containing data for rendering a celestial body."""
+        render_data = []
+        if self.sun:
+            render_data.append({
+                'name': self.sun.name,
+                'position': self.sun.position.tolist(), # Convert numpy array to list for easier JSON/Pygame use
+                'radius_sim': self.sun.radius_sim,
+                'color': self.sun.color
+            })
+        for planet in self.planets:
+            render_data.append({
+                'name': planet.name,
+                'position': planet.position.tolist(),
+                'radius_sim': planet.radius_sim,
+                'color': planet.color
+            })
+        return render_data
+
+    # Override _generate_resources if resource placement needs to be aware of the solar system (e.g. not inside sun)
+    # For Phase 1, default resource generation from SpaceEnvironment is fine.
+    # def _generate_resources(self):
+    #     super()._generate_resources() # or custom logic
+    #     # Example: ensure resources are not too close to the Sun
+    #     if self.sun:
+    #         for res in self.resources:
+    #             dist_to_sun = self._distance(res.position, self.sun.position)
+    #             # Define a safe distance, e.g., Sun's radius_sim + buffer
+    #             safe_dist = self.sun.radius_sim * 1.5 
+    #             while dist_to_sun < safe_dist:
+    #                 res.position = (random.uniform(0, self.world_width), 
+    #                                 random.uniform(0, self.world_height))
+    #                 dist_to_sun = self._distance(res.position, self.sun.position)
+
+    # The render() method itself is usually handled by the Visualization class.
+    # This environment can provide data for rendering.
+    # If SpaceEnvironment has a render method that needs overriding:
+    # def render(self, mode='human'):
+    #     # super().render(mode) # If SpaceEnvironment.render() does something useful for probes
+    #     # Add rendering for celestial bodies if direct rendering happens here.
+    #     # Typically, the main simulation loop calls a separate visualizer.
+    #     pass

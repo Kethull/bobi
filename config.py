@@ -1,9 +1,13 @@
 # config.py
 import numpy as np
 
-# World Configuration
-WORLD_WIDTH = 2000
-WORLD_HEIGHT = 2000
+# World Configuration / Solar System Scale
+AU_SCALE = 10000
+SOLAR_SYSTEM_DIAMETER_AU = 80
+WORLD_SIZE = SOLAR_SYSTEM_DIAMETER_AU * AU_SCALE # e.g., 800000
+WORLD_WIDTH = WORLD_SIZE  # Keep for compatibility if used elsewhere, or phase out
+WORLD_HEIGHT = WORLD_SIZE # Keep for compatibility if used elsewhere, or phase out
+SUN_POSITION = [WORLD_SIZE / 2, WORLD_SIZE / 2]
 MAX_PROBES = 20
 INITIAL_PROBES = 1
 
@@ -127,6 +131,29 @@ ACTION_SPACE_DIMS = [
     NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1
 ]
 
+# Solar System Configuration
+SUN_MASS_KG = 1.989e30 # Actual mass in kg
+# G_PHYSICAL = 6.67430e-11 # Physical G in m^3 kg^-1 s^-2 (defined in OrbitalMechanics)
+
+PLANET_DATA = {
+    'Sun': {'mass_kg': SUN_MASS_KG, 'radius_sim': 500, 'color': (255, 255, 0), 'initial_pos_au': [0,0], 'initial_vel_au_day': [0,0]}, # Sun is central
+    'Mercury': {
+        'mass_kg': 3.301e23, 'radius_sim': 5, 'color': (128, 128, 128),
+        'semi_major_axis_au': 0.387, 'eccentricity': 0.206,
+        'orbital_period_days': 88.0, 'inclination_deg': 7.0,
+        # Initial pos/vel will be calculated in environment.py
+    },
+    'Venus': {
+        'mass_kg': 4.867e24, 'radius_sim': 8, 'color': (230, 200, 100),
+        'semi_major_axis_au': 0.723, 'eccentricity': 0.007,
+        'orbital_period_days': 224.7, 'inclination_deg': 3.4,
+        # Initial pos/vel will be calculated in environment.py
+    },
+}
+
+# Time scaling
+SIM_SECONDS_PER_STEP = 3600 # 1 simulation step = 1 hour
+
 # Visualization
 SCREEN_WIDTH = 1200
 SCREEN_HEIGHT = 800
@@ -145,3 +172,12 @@ METALLIC_SHEEN_INTENSITY = 0.7
 ORGANIC_CURVE_RESOLUTION = 20  # Higher for smoother curves
 ENGINE_GLOW_INTENSITY = 1.2
 ORGANIC_EXHAUST_PARTICLE_SCALE = 0.1 # Scale factor for organic ship exhaust particles (default 1.0)
+# Asteroid Belt
+ASTEROID_BELT_INNER_AU = 2.2  # Inner radius in AU
+ASTEROID_BELT_OUTER_AU = 3.2  # Outer radius in AU
+ASTEROID_COUNT = 500 # Start with a manageable number for performance.
+ASTEROID_MIN_RADIUS_SIM = 0.2 # Min display radius in sim units for asteroids
+ASTEROID_MAX_RADIUS_SIM = 0.8 # Max display radius in sim units for asteroids
+ASTEROID_DEFAULT_COLOR = (100, 100, 100)
+ASTEROID_MASS_KG_MIN = 1e10 # Placeholder minimum mass for an asteroid
+ASTEROID_MASS_KG_MAX = 1e15 # Placeholder maximum mass for an asteroid

@@ -7,13 +7,13 @@ import pickle
 import os
 
 from config import *
-from environment import SpaceEnvironment
+from environment import SolarSystemEnvironment # Changed from SpaceEnvironment
 from probe import ProbeAgent
 from visualization import Visualization
 
 class BobiverseSimulation:
     def __init__(self):
-        self.environment = SpaceEnvironment()
+        self.environment = SolarSystemEnvironment() # Changed from SpaceEnvironment
         self.visualization = Visualization()
         self.probe_agents: Dict[int, ProbeAgent] = {} # Added type hint
         self.running = True

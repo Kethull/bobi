@@ -46,18 +46,29 @@ class Visualization:
         }
         
         # Scaling for world to screen
-        self.scale_x = (SCREEN_WIDTH - 200) / WORLD_WIDTH
-        self.scale_y = SCREEN_HEIGHT / WORLD_HEIGHT
+        # WORLD_WIDTH and WORLD_HEIGHT are now WORLD_SIZE from config.py
+        # The UI panel width (200) might need to be re-evaluated if ModernUI takes full screen or specific part.
+        # For now, assuming the main viewport is still SCREEN_WIDTH - 200 for game world.
+        # If ModernUI is an overlay, then full SCREEN_WIDTH might be used for world.
+        # Let's assume the main simulation view area is the full screen for now,
+        # as the solar system is vast. ModernUI can be an overlay.
+        self.scale_x = SCREEN_WIDTH / WORLD_SIZE
+        self.scale_y = SCREEN_HEIGHT / WORLD_SIZE
         
         # Trail storage
         self.probe_trails = {}
         
     def world_to_screen(self, world_pos):
-        """Convert world coordinates to screen coordinates"""
-        return (
-            int(world_pos[0] * self.scale_x),
-            int(world_pos[1] * self.scale_y)
-        )
+        """Convert world coordinates to screen coordinates, centering the world"""
+        # Calculate the offset from the world center
+        offset_x = world_pos[0] - (WORLD_SIZE / 2)
+        offset_y = world_pos[1] - (WORLD_SIZE / 2)
+
+        # Scale the offset and add the screen center
+        screen_x = int(offset_x * self.scale_x + SCREEN_WIDTH / 2)
+        screen_y = int(offset_y * self.scale_y + SCREEN_HEIGHT / 2)
+
+        return (screen_x, screen_y)
     
     def render(self, environment, probe_agents: Dict = None):
         """Enhanced rendering with all new systems"""
@@ -78,21 +89,37 @@ class Visualization:
             target_offset_y = target_camera_world_center[1] - screen_center_world_y
             
             self.camera_offset[0] += (target_offset_x - self.camera_offset[0]) * 0.05
-            self.camera_offset[1] += (target_offset_y - self.camera_offset[1]) * 0.05
-        else:
-            pass
-
+            self.camera_offset[1] += (target_offset_y - self.camera_offset[1]) * 0.05 # Moved here
+        # else for camera logic if needed, or just default camera_offset if no probe selected
+        
         self.starfield.draw(self.screen, self.camera_offset)
         
-        self._draw_enhanced_resources(environment.resources) # Placeholder name
-        self._draw_enhanced_probes(environment.probes, environment.messages) # Now correctly defined
+        self._draw_celestial_bodies(environment) # Call to draw celestial bodies
+        self._draw_enhanced_resources(environment.resources)
+        self._draw_enhanced_probes(environment.probes, environment.messages)
         if ENABLE_PARTICLE_EFFECTS:
             self.particle_system.render(self.screen)
-        self._draw_enhanced_ui(environment, probe_agents) # Placeholder name
+        self._draw_enhanced_ui(environment, probe_agents)
         
         pygame.display.flip()
         self.clock.tick(FPS)
     
+    # Definition of _draw_celestial_bodies should be at class level, not interrupting render method
+    def _draw_celestial_bodies(self, environment):
+        """Draws the Sun and planets."""
+        if hasattr(environment, 'get_celestial_bodies_data_for_render'):
+            celestial_data = environment.get_celestial_bodies_data_for_render()
+            for body_data in celestial_data:
+                screen_pos = self.world_to_screen(body_data['position'])
+                screen_radius = int(body_data['radius_sim'])
+                screen_radius = max(1, screen_radius)
+                pygame.draw.circle(self.screen, body_data['color'], screen_pos, screen_radius)
+                # Optional: Draw name labels
+                # text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
+                # text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
+                # self.screen.blit(text_surface, text_rect)
+        # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
+
     def _draw_enhanced_resources(self, resources: List[Resource]): # Renamed
         """Draw resource nodes with enhanced visual effects"""
         for resource in resources:
