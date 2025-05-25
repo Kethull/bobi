@@ -20,8 +20,10 @@ MAX_ENERGY = 100
 INITIAL_ENERGY = 50
 REPLICATION_COST = 40
 REPLICATION_MIN_ENERGY = 60
-MAX_VELOCITY = 5.0
-THRUST_POWER = [0, 1, 2]
+PROBE_MASS = 2.0  # Modified - Mass of the probe
+MAX_VELOCITY = 50.0  # Modified - Max speed for normalization/safety
+THRUST_FORCE = [0.0, 2.0, 4.0]  # Renamed and values updated
+THRUST_ENERGY_COST_FACTOR = 0.05 # New - Cost per unit of force per step
 ENERGY_DECAY_RATE = 0.01
 
 # Communication

@@ -72,7 +72,8 @@ class SpaceEnvironment(gym.Env):
             'generation': generation,
             'visited_positions': set(),
             'total_reward': 0,
-            'alive': True
+            'alive': True,
+            'mass': PROBE_MASS  # Initialize probe mass
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -168,22 +169,26 @@ class SpaceEnvironment(gym.Env):
         # Parse action
         thrust_dir, thrust_power, communicate, replicate = action
         
-        # Apply thrust
+        # Apply thrust (Newtonian physics)
         if thrust_dir > 0:  # 0 is no thrust
             directions = [
                 (0, 1), (1, 1), (1, 0), (1, -1),
                 (0, -1), (-1, -1), (-1, 0), (-1, 1)
             ]
-            dx, dy = directions[thrust_dir - 1]
-            power = THRUST_POWER[thrust_power]
+            direction_vector = np.array(directions[thrust_dir - 1], dtype=np.float32)
+            force_magnitude = THRUST_FORCE[thrust_power] # Use THRUST_FORCE from config
             
-            probe['velocity'] += np.array([dx * power, dy * power]) * 0.1
-            probe['velocity'] = np.clip(probe['velocity'], -MAX_VELOCITY, MAX_VELOCITY)
-            
-            # Energy cost for movement
-            energy_cost = power * 0.1
-            probe['energy'] -= energy_cost
-            reward -= energy_cost * 0.1  # Small penalty for energy use
+            if force_magnitude > 0:
+                force_vector = direction_vector * force_magnitude
+                
+                # F = ma => a = F/m
+                acceleration_vector = force_vector / probe['mass']
+                probe['velocity'] += acceleration_vector
+                
+                # Energy cost for applying force
+                energy_cost = force_magnitude * THRUST_ENERGY_COST_FACTOR # New energy cost model
+                probe['energy'] -= energy_cost
+                reward -= energy_cost * 0.01 # Small penalty for energy use, scaled by new cost factor
         
         # Communication
         if communicate > 0:
@@ -282,7 +287,10 @@ class SpaceEnvironment(gym.Env):
             if probe['alive']:
                 probe['position'] += probe['velocity']
                 probe['position'] = self._wrap_position(probe['position'])
-                probe['velocity'] *= 0.95  # Friction
+                # probe['velocity'] *= 0.95  # Friction removed for Newtonian motion
+                
+                # Optional: Clamp velocity to the new MAX_VELOCITY as a safety/normalization cap
+                probe['velocity'] = np.clip(probe['velocity'], -MAX_VELOCITY, MAX_VELOCITY)
     
     def _regenerate_resources(self):
         """Regenerate resources over time"""
