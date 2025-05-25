@@ -14,6 +14,8 @@ RESOURCE_MAX_AMOUNT = 200
 RESOURCE_REGEN_RATE = 0.00  # units per step
 HARVEST_RATE = 2.0
 HARVEST_DISTANCE = 5
+DISCOVERY_RANGE = HARVEST_DISTANCE * 2.5 # Range within which a resource is "discovered"
+RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource
 
 # Probe Configuration
 MAX_ENERGY = 100

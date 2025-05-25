@@ -77,7 +77,8 @@ class SpaceEnvironment(gym.Env):
             'is_thrusting_visual': False, # For visualization
             'thrust_power_visual': 0,     # For visualization
             'is_mining_visual': False,    # For mining laser visualization
-            'mining_target_pos_visual': None # For mining laser visualization
+            'mining_target_pos_visual': None, # For mining laser visualization
+            'discovered_resources': set() # For resource discovery reward
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -229,6 +230,15 @@ class SpaceEnvironment(gym.Env):
         if grid_pos not in probe['visited_positions']:
             probe['visited_positions'].add(grid_pos)
             reward += 1.0
+        
+        # Resource discovery reward
+        for res_idx, resource_node in enumerate(self.resources):
+            if resource_node.amount > 0 and res_idx not in probe['discovered_resources']:
+                dist_to_resource = self._distance(probe['position'], resource_node.position)
+                if dist_to_resource < DISCOVERY_RANGE:
+                    probe['discovered_resources'].add(res_idx)
+                    reward += RESOURCE_DISCOVERY_REWARD
+                    # print(f"Probe {probe_id} discovered resource {res_idx} at {resource_node.position}") # Optional: for debugging
         
         # Resource collection
         reward += self._handle_resource_collection(probe_id)
