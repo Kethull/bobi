@@ -136,19 +136,50 @@ SUN_MASS_KG = 1.989e30 # Actual mass in kg
 # G_PHYSICAL = 6.67430e-11 # Physical G in m^3 kg^-1 s^-2 (defined in OrbitalMechanics)
 
 PLANET_DATA = {
-    'Sun': {'mass_kg': SUN_MASS_KG, 'radius_sim': 500, 'color': (255, 255, 0), 'initial_pos_au': [0,0], 'initial_vel_au_day': [0,0]}, # Sun is central
+    'Sun': {
+        'mass_kg': 1.989e30,
+        'radius_sim': 4,  # Drastically reduced for better orbital view
+        'color': (255, 255, 0),
+        'initial_pos_au': [0, 0],
+        'initial_vel_au_day': [0, 0]
+    },
     'Mercury': {
-        'mass_kg': 3.301e23, 'radius_sim': 5, 'color': (128, 128, 128),
-        'semi_major_axis_au': 0.387, 'eccentricity': 0.206,
-        'orbital_period_days': 88.0, 'inclination_deg': 7.0,
-        # Initial pos/vel will be calculated in environment.py
+        'mass_kg': 3.301e23,
+        'radius_sim': 0.1,  # Scaled down for visibility
+        'color': (128, 128, 128),
+        'semi_major_axis_au': 0.387,
+        'eccentricity': 0.206,
+        'orbital_period_days': 88.0,
+        'inclination_deg': 7.0,
     },
     'Venus': {
-        'mass_kg': 4.867e24, 'radius_sim': 8, 'color': (230, 200, 100),
-        'semi_major_axis_au': 0.723, 'eccentricity': 0.007,
-        'orbital_period_days': 224.7, 'inclination_deg': 3.4,
-        # Initial pos/vel will be calculated in environment.py
+        'mass_kg': 4.867e24,
+        'radius_sim': 0.15,  # Scaled down for visibility
+        'color': (230, 200, 100),
+        'semi_major_axis_au': 0.723,
+        'eccentricity': 0.007,
+        'orbital_period_days': 225.0,  # Corrected orbital period
+        'inclination_deg': 3.4,
     },
+    'Earth': {
+        'mass_kg': 5.972e24,
+        'radius_sim': 0.15, # Scaled down for visibility
+        'color': (0, 100, 255),
+        'semi_major_axis_au': 1.000,
+        'eccentricity': 0.017,
+        'orbital_period_days': 365.25,
+        'inclination_deg': 0.0,
+    },
+    'Mars': {
+        'mass_kg': 6.417e23,
+        'radius_sim': 0.12, # Scaled down for visibility
+        'color': (255, 100, 50),
+        'semi_major_axis_au': 1.524,
+        'eccentricity': 0.093,
+        'orbital_period_days': 687.0,
+        'inclination_deg': 1.85,
+    },
+    # Jupiter, Saturn, Uranus, Neptune will be added later
 }
 
 # Time scaling
