@@ -17,7 +17,7 @@ class BobiverseSimulation:
         self.visualization = Visualization()
         self.probe_agents: Dict[int, ProbeAgent] = {} # Added type hint
         self.running = True
-        self.training_mode = False # Can be set to True to enable training
+        self.training_mode = True # Can be set to True to enable training
         self.episode_count = 0
         
     def initialize_agents(self):
