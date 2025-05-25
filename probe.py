@@ -32,7 +32,8 @@ class ProbeAgent:
                 learning_rate=LEARNING_RATE,
                 n_steps=2048,
                 batch_size=BATCH_SIZE,
-                verbose=0
+                verbose=0,
+                device='cpu'  # Force CPU
             )
     
     def _inherit_model(self, parent_model):
@@ -44,7 +45,8 @@ class ProbeAgent:
             learning_rate=LEARNING_RATE,
             n_steps=2048,
             batch_size=BATCH_SIZE,
-            verbose=0
+            verbose=0,
+            device='cpu'  # Force CPU
         )
         
         # Copy parent weights with small mutations

@@ -82,7 +82,16 @@ class SpaceEnvironment(gym.Env):
             'selected_target_info': None, # For target selection: {'type': 'resource', 'id': res_idx, 'world_pos': (x,y)}
             'distance_to_target_last_step': float('inf'), # For target proximity reward
             'angle': random.uniform(0, 2 * np.pi), # Initial orientation in radians
-            'angular_velocity': 0.0 # Initial angular velocity in radians/step
+            'angular_velocity': 0.0, # Initial angular velocity in radians/step
+            'action_smoothing_state': {
+                'previous_linear_action': 0,
+                'previous_rotation_action': 0, # This was in the prompt but might not be directly used if blending raw actions
+                'thrust_timer': 0,
+                'target_thrust_power': 0,
+                'current_thrust_ramp': 0.0,
+                'rotation_blend': 0.0,       # Smoothed rotation command (0-4 for rotational_torque_action)
+                'linear_blend': 0.0          # Smoothed linear command (0-3 for linear_thrust_action)
+            }
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -230,81 +239,159 @@ class SpaceEnvironment(gym.Env):
         return observations, rewards, dones, infos
     
     def _process_probe_action(self, probe_id: int, action: np.ndarray) -> float:
-        """Process a single probe's action and return reward"""
+        """Process a single probe's action with smoothing and return reward"""
         probe = self.probes[probe_id]
         reward = 0.0
-        probe['is_thrusting_visual'] = False # Reset visual flag each step
-        probe['thrust_power_visual'] = 0     # Reset visual thrust power
-        probe['is_mining_visual'] = False    # Reset mining visual flag
-        probe['mining_target_pos_visual'] = None # Reset mining target
+        
+        # Reset visual flags
+        probe['is_thrusting_visual'] = False
+        probe['thrust_power_visual'] = 0
+        probe['is_mining_visual'] = False
+        probe['mining_target_pos_visual'] = None
 
         is_low_power = probe['energy'] <= 0
-
         if is_low_power:
-            reward -= LOW_POWER_PENALTY # Apply penalty for being in low power mode
-            # Probe cannot perform actions that cost energy if in low power mode
-            thrust_dir = 0
-            communicate = 0
-            replicate = 0
-            # Note: Resource collection can still happen passively below
+            reward -= LOW_POWER_PENALTY
 
-        # Parse action (actions might have been overridden if low_power)
-        # ACTION_SPACE_DIMS = [3, 5, 2, 2, NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1]
-        # linear_thrust_action, rotational_torque_action, communicate_action, replicate_action, target_select_action
-        linear_thrust_action, rotational_torque_action, communicate_action, replicate_action, target_select_action = action
+        # Parse raw actions from the agent
+        raw_linear_thrust_action, raw_rotational_torque_action, \
+        raw_communicate_action, raw_replicate_action, raw_target_select_action = action
+
+        smoothing_state = probe['action_smoothing_state']
+
+        # --- ACTION SMOOTHING FOR LINEAR THRUST ---
+        # Determine input for linear smoothing (0 if low power)
+        input_linear_action = 0 if is_low_power else raw_linear_thrust_action
         
-        # Apply penalties or restrictions if low_power
-        if is_low_power:
-            # No thrust or rotation if low power
-            linear_thrust_action = 0
-            rotational_torque_action = 0
-            communicate_action = 0 # No communication
-            replicate_action = 0   # No replication
-            # target_select_action can remain, but probe won't move effectively.
+        smoothing_state['linear_blend'] = (
+            ACTION_SMOOTHING_FACTOR * smoothing_state['linear_blend'] +
+            (1 - ACTION_SMOOTHING_FACTOR) * input_linear_action
+        )
+        effective_linear_action = int(round(smoothing_state['linear_blend']))
+
+        # THRUST DURATION SYSTEM
+        if effective_linear_action > 0 and not is_low_power: # Only start/continue thrust if not low power and action > 0
+            if smoothing_state['thrust_timer'] <= 0:  # Start new thrust
+                smoothing_state['target_thrust_power'] = effective_linear_action # This will be 1, 2, or 3
+                smoothing_state['thrust_timer'] = MIN_THRUST_DURATION
+                # current_thrust_ramp will be calculated based on timer
+            # Continue existing thrust (timer decrements below)
         
-        # --- Target Selection Logic (remains mostly the same, uses target_select_action) ---
-        if not is_low_power: # Allow target selection only if not in low power
-            if target_select_action == 0:
-                probe['selected_target_info'] = None
-                probe['distance_to_target_last_step'] = float('inf')
-            elif target_select_action > 0:
-                # Find the (target_select_action)-th nearest resource
-                # This re-queries nearest resources, could be optimized by passing from get_observation if needed
-                observed_resource_distances = []
-                for r_idx, resource in enumerate(self.resources):
-                    if resource.amount > 0:
-                        dist = self._distance(probe['position'], resource.position)
-                        observed_resource_distances.append({'dist': dist, 'id': r_idx, 'world_pos': resource.position})
+        if smoothing_state['thrust_timer'] > 0:
+            smoothing_state['thrust_timer'] -= 1
+            if is_low_power: # If somehow thrust_timer was active and probe ran out of power
+                 smoothing_state['thrust_timer'] = 0 # Stop thrust immediately
+                 smoothing_state['current_thrust_ramp'] = 0.0
+
+        if smoothing_state['thrust_timer'] <= 0: # If timer expired or was forced to 0
+            smoothing_state['target_thrust_power'] = 0 # Ensure target power is also zeroed out
+            # Ramp down (implicit as current_thrust_ramp will decrease if target_thrust_power is 0, or handled by ramp logic)
+            # For a more explicit ramp down, one might adjust current_thrust_ramp towards 0 over THRUST_RAMP_TIME here.
+            # However, the current ramp logic based on (MIN_THRUST_DURATION - timer) / RAMP_TIME handles ramp-up.
+            # For ramp-down, if target_thrust_power becomes 0, current_thrust_ramp should ideally decrease.
+            # Let's adjust ramp logic slightly: if target_thrust_power is 0, ramp should go to 0.
+            if smoothing_state['target_thrust_power'] == 0:
+                 smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - (1.0/THRUST_RAMP_TIME))
+
+
+        # GRADUAL THRUST RAMPING
+        if smoothing_state['target_thrust_power'] > 0 and not is_low_power : # Only ramp up if there's a target power and not low energy
+            # Ramp up progress: how much of the MIN_THRUST_DURATION has passed relative to RAMP_TIME
+            # Example: MIN_DUR=4, RAMP_TIME=3.
+            # timer=4 (just started): (4-4)/3 = 0. ramp=0
+            # timer=3: (4-3)/3 = 0.33. ramp=target*0.33
+            # timer=2: (4-2)/3 = 0.66. ramp=target*0.66
+            # timer=1: (4-1)/3 = 1.0. ramp=target*1.0
+            ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / max(1, THRUST_RAMP_TIME))
+            smoothing_state['current_thrust_ramp'] = smoothing_state['target_thrust_power'] * ramp_progress
+        elif is_low_power or smoothing_state['target_thrust_power'] == 0: # Ensure ramp is zero if low power or no target thrust
+             # Gradual ramp down if target_thrust_power just became 0
+            if smoothing_state['current_thrust_ramp'] > 0 and smoothing_state['target_thrust_power'] == 0 :
+                smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - (THRUST_FORCE[len(THRUST_FORCE)-1] / max(1,THRUST_RAMP_TIME))) # Ramp down based on max force
+            else:
+                 smoothing_state['current_thrust_ramp'] = 0.0
+
+
+        # Apply smooth thrust
+        if smoothing_state['current_thrust_ramp'] > 0.01 and not is_low_power: # Threshold and low power check
+            # target_thrust_power is 0,1,2,3. THRUST_FORCE has 4 levels.
+            # The actual force applied should be based on the ramp value, not directly target_thrust_power.
+            # The ramp is already scaled by target_thrust_power.
+            # thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * (smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power'] if smoothing_state['target_thrust_power'] > 0 else 0)
+            # Simpler: current_thrust_ramp is already an "effective power level"
+            # We need to map current_thrust_ramp (e.g. 0 to 3) to a force.
+            # Let's assume current_thrust_ramp is the "effective power index" to use with THRUST_FORCE
+            # No, current_thrust_ramp is target_power * ramp_progress. So it's already scaled.
+            # THRUST_FORCE[index] gives a base magnitude. We need to scale this base magnitude by ramp_progress.
+            # target_thrust_power is the *intended* power level (e.g. 1, 2, or 3)
+            # ramp_progress is the 0-1 factor.
+            
+            # Corrected thrust magnitude calculation:
+            # Use the target_thrust_power to get the base force, then scale by ramp_progress
+            base_force_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']]
+            actual_thrust_magnitude = base_force_magnitude * (smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power'] if smoothing_state['target_thrust_power'] > 0 else 0)
+            # This simplifies to: actual_thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
+            # The prompt had: thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
+            # This seems correct. current_thrust_ramp = target_power * ramp_progress.
+            # So, if THRUST_FORCE is indexed by target_power, then multiply by ramp_progress.
+            # The prompt's `smoothing_state['current_thrust_ramp'] = target_power * ramp_progress`
+            # and then `thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress`
+            # This means `actual_thrust_magnitude` is `THRUST_FORCE[target_power] * (current_thrust_ramp / target_power)`
+            # This is `THRUST_FORCE[target_power] * ramp_progress`. This is what the prompt had.
+
+            # The prompt's code for applying thrust:
+            # thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
+            # This is correct. `target_power` is `smoothing_state['target_thrust_power']`.
+            # `ramp_progress` is `min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / THRUST_RAMP_TIME)`
+            
+            # Re-evaluating ramp_progress and thrust_magnitude from prompt:
+            # ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / THRUST_RAMP_TIME)
+            # thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * ramp_progress
+            # This seems the most direct from the prompt.
+
+            # Let's use the prompt's ramp_progress calculation directly.
+            # Ensure THRUST_RAMP_TIME is not zero.
+            ramp_time_divisor = max(1, THRUST_RAMP_TIME)
+            ramp_progress = 0.0
+            if smoothing_state['target_thrust_power'] > 0 : # only calculate ramp progress if trying to thrust
+                ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / ramp_time_divisor)
+            
+            thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * ramp_progress
+
+            if thrust_magnitude > 0.01: # Apply if significant
+                direction_vector = np.array([np.cos(probe['angle']), np.sin(probe['angle'])])
+                force_vector = direction_vector * thrust_magnitude
+                acceleration = force_vector / probe['mass']
+                probe['velocity'] += acceleration
                 
-                observed_resource_distances.sort(key=lambda r: r['dist'])
+                probe['is_thrusting_visual'] = True
+                probe['thrust_power_visual'] = smoothing_state['target_thrust_power'] # Visual shows target power
                 
-                target_idx_in_observed_list = target_select_action - 1 # 1-based action to 0-based list index
-                if target_idx_in_observed_list < len(observed_resource_distances) and target_idx_in_observed_list < NUM_OBSERVED_RESOURCES_FOR_TARGETING:
-                    selected_res_info = observed_resource_distances[target_idx_in_observed_list]
-                    probe['selected_target_info'] = {
-                        'type': 'resource',
-                        'id': selected_res_info['id'], # Actual index in self.resources
-                        'world_pos': selected_res_info['world_pos']
-                    }
-                    probe['distance_to_target_last_step'] = selected_res_info['dist']
-                    # print(f"Probe {probe_id} targeted resource {selected_res_info['id']} at {selected_res_info['world_pos']}") # Debug
-                else:
-                    # Invalid target selection (e.g., fewer than target_select_action resources available)
-                    # Clear target if selection was invalid
-                    probe['selected_target_info'] = None
-                    probe['distance_to_target_last_step'] = float('inf')
-        
-        # --- Rotational Torque Application ---
+                energy_cost = thrust_magnitude * THRUST_ENERGY_COST_FACTOR
+                probe['energy'] = max(0, probe['energy'] - energy_cost)
+                reward -= energy_cost * 0.01
+
+
+        # --- SMOOTH ROTATIONAL CONTROL ---
+        input_rotational_action = 0 if is_low_power else raw_rotational_torque_action
+
+        smoothing_state['rotation_blend'] = (
+            ROTATION_SMOOTHING_FACTOR * smoothing_state['rotation_blend'] +
+            (1 - ROTATION_SMOOTHING_FACTOR) * input_rotational_action
+        )
+        effective_rotation_action = int(round(smoothing_state['rotation_blend']))
+
         torque_applied = 0.0
-        if rotational_torque_action > 0 and not is_low_power: # Action 0 is no torque
-            # rotational_torque_action: 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
-            if rotational_torque_action == 1: # Left Low
+        if effective_rotation_action > 0 and not is_low_power: # Action 0 is no torque
+            # effective_rotation_action: 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
+            # TORQUE_MAGNITUDES: [0=None, 1=Low, 2=High]
+            if effective_rotation_action == 1: # Left Low
                 torque_applied = -TORQUE_MAGNITUDES[1]
-            elif rotational_torque_action == 2: # Left High
+            elif effective_rotation_action == 2: # Left High
                 torque_applied = -TORQUE_MAGNITUDES[2]
-            elif rotational_torque_action == 3: # Right Low
+            elif effective_rotation_action == 3: # Right Low
                 torque_applied = TORQUE_MAGNITUDES[1]
-            elif rotational_torque_action == 4: # Right High
+            elif effective_rotation_action == 4: # Right High
                 torque_applied = TORQUE_MAGNITUDES[2]
 
             if torque_applied != 0.0:
@@ -313,76 +400,71 @@ class SpaceEnvironment(gym.Env):
                 
                 energy_cost_rotation = abs(torque_applied) * ROTATIONAL_ENERGY_COST_FACTOR
                 probe['energy'] = max(0, probe['energy'] - energy_cost_rotation)
-                reward -= energy_cost_rotation * 0.01 # Small penalty for energy use
+                reward -= energy_cost_rotation * 0.01
 
-        # --- Linear Thrust Application (Ship-Relative) ---
-        probe['is_thrusting_visual'] = False # Reset visual flag
-        probe['thrust_power_visual'] = 0
-        if linear_thrust_action > 0 and not is_low_power: # Action 0 is no thrust
-            force_magnitude = THRUST_FORCE[linear_thrust_action] # THRUST_FORCE[0] should be 0
-            
-            if force_magnitude > 0:
-                # Direction is along the probe's current angle
-                direction_vector = np.array([np.cos(probe['angle']), np.sin(probe['angle'])], dtype=np.float32)
-                force_vector = direction_vector * force_magnitude
+
+        # --- Target Selection Logic --- (Using raw_target_select_action)
+        if not is_low_power:
+            if raw_target_select_action == 0:
+                probe['selected_target_info'] = None
+                probe['distance_to_target_last_step'] = float('inf')
+            elif raw_target_select_action > 0:
+                observed_resource_distances = []
+                for r_idx, resource in enumerate(self.resources):
+                    if resource.amount > 0:
+                        dist = self._distance(probe['position'], resource.position)
+                        observed_resource_distances.append({'dist': dist, 'id': r_idx, 'world_pos': resource.position})
+                observed_resource_distances.sort(key=lambda r: r['dist'])
                 
-                acceleration_vector = force_vector / probe['mass']
-                probe['velocity'] += acceleration_vector
-                
-                energy_cost_linear = force_magnitude * THRUST_ENERGY_COST_FACTOR
-                probe['energy'] = max(0, probe['energy'] - energy_cost_linear)
-                reward -= energy_cost_linear * 0.01 # Small penalty for energy use
-                
-                probe['is_thrusting_visual'] = True
-                probe['thrust_power_visual'] = linear_thrust_action
+                target_idx_in_observed_list = raw_target_select_action - 1
+                if target_idx_in_observed_list < len(observed_resource_distances) and \
+                   target_idx_in_observed_list < NUM_OBSERVED_RESOURCES_FOR_TARGETING:
+                    selected_res_info = observed_resource_distances[target_idx_in_observed_list]
+                    probe['selected_target_info'] = {
+                        'type': 'resource', 'id': selected_res_info['id'],
+                        'world_pos': selected_res_info['world_pos']
+                    }
+                    probe['distance_to_target_last_step'] = selected_res_info['dist']
+                else:
+                    probe['selected_target_info'] = None
+                    probe['distance_to_target_last_step'] = float('inf')
         
-        # Communication
-        if communicate_action > 0 and not is_low_power:
+        # --- Communication --- (Using raw_communicate_action)
+        if raw_communicate_action > 0 and not is_low_power:
             reward += self._handle_communication(probe_id)
         
-        # Replication
-        if replicate_action > 0 and probe['energy'] > REPLICATION_MIN_ENERGY and not is_low_power:
+        # --- Replication --- (Using raw_replicate_action)
+        if raw_replicate_action > 0 and probe['energy'] > REPLICATION_MIN_ENERGY and not is_low_power:
             reward += self._handle_replication(probe_id)
         
-        # Survival reward
-        reward += 0.1
+        # --- Standard Rewards & State Updates ---
+        reward += 0.1 # Survival reward
         
-        # Exploration reward
         grid_pos = (int(probe['position'][0] // 50), int(probe['position'][1] // 50))
         if grid_pos not in probe['visited_positions']:
             probe['visited_positions'].add(grid_pos)
-            reward += 1.0
+            reward += 1.0 # Exploration reward
         
-        # Resource discovery reward
         for res_idx, resource_node in enumerate(self.resources):
             if resource_node.amount > 0 and res_idx not in probe['discovered_resources']:
                 dist_to_resource = self._distance(probe['position'], resource_node.position)
                 if dist_to_resource < DISCOVERY_RANGE:
                     probe['discovered_resources'].add(res_idx)
-                    reward += RESOURCE_DISCOVERY_REWARD
+                    reward += RESOURCE_DISCOVERY_REWARD # Resource discovery reward
         
-        # Target Proximity Reward
         if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
             target_world_pos = probe['selected_target_info']['world_pos']
             current_distance_to_target = self._distance(probe['position'], target_world_pos)
-            
-            if probe['distance_to_target_last_step'] != float('inf'): # Avoid reward on first step of targeting
+            if probe['distance_to_target_last_step'] != float('inf'):
                 distance_delta = probe['distance_to_target_last_step'] - current_distance_to_target
-                if distance_delta > 0: # Got closer
-                    reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR
-            
+                if distance_delta > 0: reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR
             probe['distance_to_target_last_step'] = current_distance_to_target
 
-        # Resource collection
-        reward += self._handle_resource_collection(probe_id)
+        reward += self._handle_resource_collection(probe_id) # Resource collection
         
-        # Update probe state
         probe['age'] += 1
-        probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE) # Ensure energy doesn't go below 0 from decay
+        probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE)
         probe['total_reward'] += reward
-        
-        # Probe no longer "dies" by having alive set to False or a large death penalty.
-        # The penalty is now continuous if is_low_power.
         
         return reward
     
@@ -449,19 +531,34 @@ class SpaceEnvironment(gym.Env):
         return reward
     
     def _update_physics(self):
-        """Update probe positions and angles based on velocities"""
-        for probe_id, probe in self.probes.items(): # Iterate with ID for consistency if needed later
-            if probe['alive']: # Should always be true now, but good check
-                # Update angle and angular velocity
-                probe['angle'] = (probe['angle'] + probe['angular_velocity']) % (2 * np.pi)
-                probe['angular_velocity'] *= (1 - ANGULAR_DAMPING_FACTOR)
-                probe['angular_velocity'] = np.clip(probe['angular_velocity'], -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY)
+        """Enhanced physics with stability and smoothing"""
+        for probe_id, probe in self.probes.items():
+            if not probe['alive']: # Skip updates for non-alive probes
+                continue
 
-                # Update linear position and velocity
-                probe['position'] += probe['velocity']
-                probe['position'] = self._wrap_position(probe['position'])
-                # Linear velocity damping/friction was removed for Newtonian, but angular has damping
-                probe['velocity'] = np.clip(probe['velocity'], -MAX_VELOCITY, MAX_VELOCITY)
+            # Update rotational physics (with slight damping for stability)
+            probe['angle'] = (probe['angle'] + probe['angular_velocity']) % (2 * np.pi)
+            probe['angular_velocity'] *= (1 - ANGULAR_DAMPING_FACTOR * 0.5)  # Gentler damping
+            probe['angular_velocity'] = np.clip(probe['angular_velocity'],
+                                              -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY)
+            
+            # Update linear physics
+            probe['position'] += probe['velocity']
+            probe['position'] = self._wrap_position(probe['position'])
+            
+            # SOFT VELOCITY LIMITING (prevents harsh clamping)
+            velocity_magnitude = np.linalg.norm(probe['velocity'])
+            if velocity_magnitude > MAX_VELOCITY:
+                # Gradual velocity reduction instead of hard clamp
+                # Ensure MAX_VELOCITY is not zero to avoid division by zero
+                if MAX_VELOCITY > 1e-6: # Use a small epsilon to check for non-zero
+                    excess_factor = velocity_magnitude / MAX_VELOCITY
+                    probe['velocity'] /= (1 + (excess_factor - 1) * 0.1)  # Gentle reduction
+                else:
+                    probe['velocity'] = np.array([0.0,0.0], dtype=np.float32) # Clamp to zero if MAX_VELOCITY is zero
+            
+            # MINIMAL SPACE FRICTION (for long-term stability)
+            probe['velocity'] *= 0.9995  # Very slight drag for numerical stability
     
     def _regenerate_resources(self):
         """Regenerate resources over time"""

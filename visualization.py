@@ -15,6 +15,7 @@ class Visualization:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 16)
+        self.probe_visual_cache = {}  # Store interpolation data
         
         # Colors
         self.colors = {
@@ -85,28 +86,8 @@ class Visualization:
             (100, 255, 255),  # Gen 5 - Cyan
         ]
         
-        # Update and draw trails
-        for probe_id, probe in probes.items():
-            # Trails are drawn for all probes, regardless of energy level, as they still exist
-            screen_pos = self.world_to_screen(probe['position'])
-            
-            # Update trail
-            if probe_id not in self.probe_trails:
-                self.probe_trails[probe_id] = []
-            
-            self.probe_trails[probe_id].append(screen_pos)
-            if len(self.probe_trails[probe_id]) > 50:
-                self.probe_trails[probe_id].pop(0)
-            
-            # Draw trail
-            if len(self.probe_trails[probe_id]) > 1:
-                for i in range(1, len(self.probe_trails[probe_id])):
-                    alpha = i / len(self.probe_trails[probe_id])
-                    color = tuple(int(c * alpha) for c in self.colors['trail'])
-                    if i > 0:
-                        pygame.draw.line(self.screen, color,
-                                       self.probe_trails[probe_id][i-1],
-                                       self.probe_trails[probe_id][i], 1)
+        # Trails are handled later by _update_smooth_trail, called per probe.
+        # Old trail logic removed from here.
         
         # Draw communication links
         # current_time = len(messages)  # Simplified timestamp # Commented out unused variable
@@ -126,7 +107,33 @@ class Visualization:
         # Draw probes
         for probe_id, probe in probes.items():
             # All probes are drawn, but their appearance changes if in low power mode
-            screen_pos = self.world_to_screen(probe['position'])
+            current_world_pos = probe['position']
+            screen_pos_raw = self.world_to_screen(current_world_pos) # Raw screen position from physics
+            
+            # INTERPOLATED POSITION for ultra-smooth movement
+            screen_pos_display = screen_pos_raw # Default to raw if no cache or interpolation
+            if probe_id in self.probe_visual_cache:
+                cache = self.probe_visual_cache[probe_id]
+                if 'prev_screen_pos' in cache:
+                    # Sub-frame interpolation (fixed factor for now, could be time-based)
+                    interp_factor = 0.7 # How much to lean towards the new position (0=old, 1=new)
+                                        # Prompt had 0.3 for prev_position, so (1-0.3) for current.
+                                        # Let's use a factor that determines weight of current position.
+                    prev_s_pos = cache['prev_screen_pos']
+                    interpolated_pos_arr = (
+                        (1.0 - interp_factor) * prev_s_pos +
+                        interp_factor * np.array(screen_pos_raw)
+                    )
+                    screen_pos_display = tuple(interpolated_pos_arr.astype(int))
+            
+            # Update cache with the raw (non-interpolated) screen position for next frame's prev_screen_pos
+            if probe_id not in self.probe_visual_cache:
+                self.probe_visual_cache[probe_id] = {}
+            self.probe_visual_cache[probe_id]['prev_screen_pos'] = np.array(screen_pos_raw)
+
+            # Use screen_pos_display for all drawing related to this probe's center
+            screen_pos = screen_pos_display
+
             is_low_power = probe['energy'] <= 0
             
             if is_low_power:
@@ -166,40 +173,64 @@ class Visualization:
             ])
             
             rotated_points = [rotation_matrix @ p for p in base_points]
-            screen_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_points]
+            # screen_points uses the (potentially interpolated) screen_pos for its center
+            screen_ship_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_points]
             
-            pygame.draw.polygon(self.screen, color, screen_points)
-            pygame.draw.polygon(self.screen, (200, 200, 200), screen_points, 1) # Outline
+            pygame.draw.polygon(self.screen, color, screen_ship_points)
+            pygame.draw.polygon(self.screen, (200, 200, 200), screen_ship_points, 1) # Outline
 
-            # Draw thruster flame if active
-            if probe.get('is_thrusting_visual', False) and not is_low_power:
-                thrust_power_level = probe.get('thrust_power_visual', 0) # 0, 1, or 2
-                flame_length_factor = 0.5 + (thrust_power_level / 2.0) * 0.8 # Scale from 0.5 to 1.3 of SPACESHIP_SIZE
-                flame_length = SPACESHIP_SIZE * flame_length_factor
-                flame_width = SPACESHIP_SIZE * 0.4
+            # ENHANCED THRUST VISUALIZATION
+            smoothing_state = probe.get('action_smoothing_state', {})
+            # current_thrust_ramp is target_power * ramp_progress. Max target_power is 3 (index for THRUST_FORCE).
+            # So current_thrust_ramp can go from 0 up to 3 (if ramp_progress is 1 and target_power is 3).
+            thrust_ramp_value = smoothing_state.get('current_thrust_ramp', 0.0)
+            
+            # is_thrusting_visual is set in environment if actual force is applied.
+            # We can use thrust_ramp_value directly from smoothing_state if available.
+            # The prompt uses `probe.get('is_thrusting_visual', False)` which is fine.
+            # Let's use the ramp value for intensity.
+            
+            if probe.get('is_thrusting_visual', False) and not is_low_power and thrust_ramp_value > 0.01 :
+                # Max possible value for target_thrust_power is len(THRUST_FORCE) - 1
+                # THRUST_FORCE = [0.0, 0.15, 0.35, 0.6] has 4 levels, max index 3.
+                # So max target_thrust_power is 3.
+                # flame_intensity should be thrust_ramp_value / max_possible_ramp_value
+                max_ramp_val = float(len(THRUST_FORCE) -1) # Max value of target_thrust_power
+                flame_intensity = 0.0
+                if max_ramp_val > 0 :
+                    flame_intensity = min(1.0, thrust_ramp_value / max_ramp_val) # Normalized 0-1
 
-                # Flame points relative to ship's rear center, extending "down" in ship's local coords
-                # Ship's rear center is roughly (0, SPACESHIP_SIZE * 0.4)
-                # Tip of flame: (0, SPACESHIP_SIZE * 0.4 + flame_length)
-                # Base corners: (-flame_width/2, SPACESHIP_SIZE * 0.4), (flame_width/2, SPACESHIP_SIZE * 0.4)
+                flame_length = SPACESHIP_SIZE * (0.5 + 0.8 * flame_intensity)
+                
+                # Animate flame with slight flickering
+                # import time # Import at top of file
+                flicker = 0.9 + 0.1 * math.sin(pygame.time.get_ticks() * 0.02) # Use pygame ticks for time
+                flame_length *= flicker
+                flame_width = SPACESHIP_SIZE * 0.4 * (0.5 + 0.5 * flame_intensity) # Width also scales
+
                 base_flame_points = [
-                    np.array([0, SPACESHIP_SIZE * 0.4 + flame_length]), # Tip
-                    np.array([-flame_width * 0.5, SPACESHIP_SIZE * 0.4]),  # Left base
-                    np.array([flame_width * 0.5, SPACESHIP_SIZE * 0.4])   # Right base
+                    np.array([0, SPACESHIP_SIZE * 0.4 + flame_length]),
+                    np.array([-flame_width * 0.5, SPACESHIP_SIZE * 0.4]),
+                    np.array([flame_width * 0.5, SPACESHIP_SIZE * 0.4])
                 ]
                 
                 rotated_flame_points = [rotation_matrix @ p for p in base_flame_points]
                 screen_flame_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_flame_points]
                 
-                flame_color = (255, 255, 100) # Yellowish
-                if thrust_power_level == 2 : # Max thrust
+                # Color based on intensity
+                # thrust_power_visual is the target_power (0-3)
+                thrust_power_level_visual = probe.get('thrust_power_visual', 0)
+                flame_color = (255, 255, 100) # Default Yellowish
+                if thrust_power_level_visual >= 3 : # Max thrust (index 3)
+                    flame_color = (255,100,0) # Bright Orange/Red
+                elif thrust_power_level_visual == 2: # Mid thrust (index 2)
                     flame_color = (255,165,0) # Orange
-                elif thrust_power_level == 1:
+                elif thrust_power_level_visual == 1: # Low thrust (index 1)
                     flame_color = (255,255,0) # Yellow
                 
                 pygame.draw.polygon(self.screen, flame_color, screen_flame_points)
 
-            # Draw mining laser if active
+            # Draw mining laser if active (using screen_pos for laser origin calculation)
             if probe.get('is_mining_visual', False) and probe.get('mining_target_pos_visual') is not None and not is_low_power:
                 mining_target_world_pos = probe['mining_target_pos_visual']
                 mining_target_screen_pos = self.world_to_screen(mining_target_world_pos)
@@ -210,6 +241,7 @@ class Visualization:
                 # We need its rotated and screen-translated position
                 laser_origin_local = base_points[0] # Nose of the ship
                 rotated_laser_origin = rotation_matrix @ laser_origin_local
+                # Laser start screen pos uses the (potentially interpolated) screen_pos
                 laser_start_screen_pos = (rotated_laser_origin[0] + screen_pos[0], rotated_laser_origin[1] + screen_pos[1])
                 
                 laser_color = (0, 255, 150) # Bright cyan/green
@@ -227,13 +259,20 @@ class Visualization:
                 
                 # Draw a thicker, perhaps dashed line or a line with a small circle at the target
                 # For simplicity, a magenta line:
+                # Target line starts from the (potentially interpolated) screen_pos
                 pygame.draw.line(self.screen, target_line_color, screen_pos, target_screen_pos, 1)
                 
                 # Optionally, draw a small circle at the target resource to highlight it
                 pygame.draw.circle(self.screen, target_line_color, target_screen_pos, 5, 1)
 
+            # SMOOTH TRAIL RENDERING
+            # Pass the raw (non-interpolated) screen position for trail physics,
+            # or the displayed one for visual trail. Prompt implies visual.
+            # Let's use screen_pos_display (which is screen_pos here) for the trail points.
+            self._update_smooth_trail(probe_id, screen_pos, probe.get('velocity', np.array([0.0,0.0])))
 
-            # Draw probe ID (adjust position based on spaceship size)
+
+            # Draw probe ID (adjust position based on spaceship size, using screen_pos)
             id_text_color = (150, 150, 150) if is_low_power else (255, 255, 255)
             id_text_content = str(probe_id) + (" (LP)" if is_low_power else "")
             text_surface = self.small_font.render(id_text_content, True, id_text_color)
@@ -247,7 +286,8 @@ class Visualization:
                 bar_height = 4
                 # Position bar below the ship
                 bar_x = screen_pos[0] - bar_width // 2
-                bar_y = screen_pos[1] + SPACESHIP_SIZE * 0.5 + 5 # Below the ship
+                # Energy bar positioned relative to (potentially interpolated) screen_pos
+                bar_y = screen_pos[1] + SPACESHIP_SIZE * 0.5 + 5
                 
                 pygame.draw.rect(self.screen, (100, 100, 100),
                                (bar_x, bar_y, bar_width, bar_height)) # Background
@@ -257,6 +297,42 @@ class Visualization:
                 pygame.draw.rect(self.screen, energy_color,
                                (bar_x, bar_y, energy_width, bar_height))
     
+    def _update_smooth_trail(self, probe_id, screen_pos, velocity):
+        """Enhanced trail system with velocity-based effects"""
+        if probe_id not in self.probe_trails:
+            self.probe_trails[probe_id] = []
+        
+        # screen_pos is already the (potentially interpolated) display position
+        self.probe_trails[probe_id].append(screen_pos)
+        max_trail_length = 80  # Longer trails for smooth physics
+        
+        if len(self.probe_trails[probe_id]) > max_trail_length:
+            self.probe_trails[probe_id].pop(0)
+        
+        # Draw trail with velocity-based coloring
+        if len(self.probe_trails[probe_id]) > 1:
+            # Normalize velocity magnitude. Ensure MAX_VELOCITY is not zero.
+            speed = np.linalg.norm(velocity)
+            speed_factor = 0.0
+            if MAX_VELOCITY > 1e-6:
+                 speed_factor = min(1.0, speed / MAX_VELOCITY)
+            
+            for i in range(1, len(self.probe_trails[probe_id])):
+                alpha_base = (i / len(self.probe_trails[probe_id]))
+                alpha = alpha_base ** 0.7 # Make tail fade a bit quicker
+                thickness = max(1, int(alpha * 3 * (0.5 + 0.5 * speed_factor)))
+                
+                # Color intensity based on speed
+                base_color = self.colors['trail']
+                # Ensure trail_color components are valid (0-255)
+                trail_color_cal = [int(c * alpha * (0.3 + 0.7 * speed_factor)) for c in base_color]
+                trail_color = tuple(max(0, min(255, tc_val)) for tc_val in trail_color_cal)
+
+                if alpha > 0.1:  # Don't draw very faint segments (was 0.2, 0.1 is fine)
+                    pygame.draw.line(self.screen, trail_color,
+                                   self.probe_trails[probe_id][i-1],
+                                   self.probe_trails[probe_id][i], thickness)
+
     def _draw_ui(self, environment, probe_agents):
         """Draw UI information panel"""
         ui_x = SCREEN_WIDTH - 190

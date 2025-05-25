@@ -22,11 +22,11 @@ MAX_ENERGY = 100
 INITIAL_ENERGY = 50
 REPLICATION_COST = 40
 REPLICATION_MIN_ENERGY = 60
-PROBE_MASS = 10.0  # Modified - Mass of the probe
+PROBE_MASS = 8.0  # Slightly lighter for more responsive feel
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
-THRUST_FORCE = [0.0, 1.0, 2.0]  # Renamed and values updated
-THRUST_ENERGY_COST_FACTOR = 0.05 # New - Cost per unit of force per step
-ENERGY_DECAY_RATE = 0.00
+THRUST_FORCE = [0.0, 0.15, 0.35, 0.6]  # Much smaller forces, 4 levels
+THRUST_ENERGY_COST_FACTOR = 0.02  # Lower cost for more action
+ENERGY_DECAY_RATE = 0.008  # Slightly lower decay
 LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
 TARGET_PROXIMITY_REWARD_FACTOR = 0.05 # Reward factor for getting closer to a selected target
 
@@ -35,10 +35,16 @@ MOMENT_OF_INERTIA = 1.0  # Affects rotational acceleration (higher = slower)
 # ROTATIONAL_THRUST_TORQUE defines torque values for [None, Left_Low, Left_High, Right_Low, Right_High] actions
 # For simplicity, let's use direct torque values for actions: 0=None, 1=Torque_L1, 2=Torque_L2, 3=Torque_R1, 4=Torque_R2
 # Let's define torque magnitudes and apply direction in environment
-TORQUE_MAGNITUDES = [0.0, 0.05, 0.1] # For [None, Low, High] rotational power levels
-ROTATIONAL_ENERGY_COST_FACTOR = 0.02 # Energy cost per unit of torque applied
+TORQUE_MAGNITUDES = [0.0, 0.015, 0.035] # Smaller torques, 3 levels (None, Low, High)
+ROTATIONAL_ENERGY_COST_FACTOR = 0.01  # Lower rotational cost
 MAX_ANGULAR_VELOCITY = np.pi / 4  # Max turn rate (radians/step) for normalization
 ANGULAR_DAMPING_FACTOR = 0.05    # Reduces angular velocity each step (e.g., 0.05 = 5% reduction)
+
+# Smoothing Parameters
+ACTION_SMOOTHING_FACTOR = 0.7  # Blend current/previous actions for linear thrust
+MIN_THRUST_DURATION = 4        # Minimum frames thrust stays active
+THRUST_RAMP_TIME = 3           # Frames to ramp thrust up/down
+ROTATION_SMOOTHING_FACTOR = 0.8 # Separate smoothing for rotation
 
 # Communication
 COMM_RANGE = 100
@@ -87,7 +93,7 @@ OBSERVATION_SPACE_SIZE = 25
 # 4. Replicate: 0=No, 1=Yes (2 options)
 # 5. Target Select: 0=None, 1-N for observed resources (NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1 options)
 ACTION_SPACE_DIMS = [
-    3,  # Linear thrust power (0=None, 1=Low, 2=High)
+    4,  # Linear thrust power (0=None, 1=Low, 2=Mid, 3=High) corresponding to THRUST_FORCE levels
     5,  # Rotational torque (0=None, 1=L_Low, 2=L_High, 3=R_Low, 4=R_High)
     2,  # Communicate
     2,  # Replicate
