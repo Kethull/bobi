@@ -80,7 +80,9 @@ class SpaceEnvironment(gym.Env):
             'mining_target_pos_visual': None, # For mining laser visualization
             'discovered_resources': set(), # For resource discovery reward
             'selected_target_info': None, # For target selection: {'type': 'resource', 'id': res_idx, 'world_pos': (x,y)}
-            'distance_to_target_last_step': float('inf') # For target proximity reward
+            'distance_to_target_last_step': float('inf'), # For target proximity reward
+            'angle': random.uniform(0, 2 * np.pi), # Initial orientation in radians
+            'angular_velocity': 0.0 # Initial angular velocity in radians/step
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -154,27 +156,48 @@ class SpaceEnvironment(gym.Env):
         # Let's make Target Rel Pos use 2 slots, so OBS_SIZE should be 19 (current) + 1 (target_active) + 2 (target_rel_pos) = 22.
         # Indices: Messages (18), Target Active (19), Target Rel Pos (20, 21)
 
-        msg_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 2 * 2 # Should be 19
-        obs[msg_idx] = min(len(recent_messages) / 5.0, 1.0)
+        # Indices for OBS_SIZE = 24:
+        # Own state: 0-5 (6)
+        # Resources: 6-14 (9) (NUM_OBSERVED_RESOURCES_FOR_TARGETING = 3)
+        # Other Probes: 15-18 (4)
+        # Messages: 19 (1)
+        # Target Active: 20 (1)
+        # Target Rel Pos: 21-22 (2)
+        # Angle: 22 (1) -> Error in manual calculation, should be 22 for angle, 23 for ang_vel if OBS_SIZE=24
+        # Corrected indices for OBS_SIZE = 24:
+        # Messages: obs[19]
+        # Target Active: obs[20]
+        # Target Rel Pos X: obs[21]
+        # Target Rel Pos Y: obs[22]
+        # Angle: obs[23] -> This is still off.
+        # Let's use the config breakdown: Base (19 values, indices 0-18), Target (3 values, indices 19-21), Rotation (2 values, indices 22-23)
 
-        target_active_idx = msg_idx + 1 # Should be 20
-        target_rel_pos_idx = msg_idx + 2 # Should be 21 (for x), 22 (for y) - wait, this is wrong.
-                                         # If OBS_SIZE is 22, max index is 21.
-                                         # target_active_idx = 19
-                                         # target_rel_pos_idx_start = 20 (covers 20, 21)
+        msg_idx = 6 + NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3 + 4 # Base index for messages is 19
+        obs[msg_idx] = min(len(recent_messages) / 5.0, 1.0) # Messages at index 19
 
-        target_active_idx = 19 # Corrected index for OBS_SIZE = 22
-        target_rel_pos_start_idx = 20 # Corrected index for OBS_SIZE = 22
+        target_active_idx = msg_idx + 1 # Index 20
+        target_rel_pos_x_idx = msg_idx + 2 # Index 21
+        target_rel_pos_y_idx = msg_idx + 3 # Index 22
 
         if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
             obs[target_active_idx] = 1.0
             target_world_pos = probe['selected_target_info']['world_pos']
             rel_pos_to_target = np.array(target_world_pos) - probe['position']
             rel_pos_to_target = self._wrap_position(rel_pos_to_target)
-            obs[target_rel_pos_start_idx : target_rel_pos_start_idx+2] = rel_pos_to_target / np.array([self.world_width, self.world_height])
+            obs[target_rel_pos_x_idx] = rel_pos_to_target[0] / (self.world_width / 2) # Normalize to [-1, 1] approx
+            obs[target_rel_pos_y_idx] = rel_pos_to_target[1] / (self.world_height / 2)
         else:
             obs[target_active_idx] = 0.0
-            obs[target_rel_pos_start_idx : target_rel_pos_start_idx+2] = 0.0 # No target, zero out rel_pos
+            obs[target_rel_pos_x_idx] = 0.0
+            obs[target_rel_pos_y_idx] = 0.0
+            
+        # Rotational Info - Indices 22 & 23 (if OBS_SIZE = 24)
+        # Corrected: Angle at index 22, Angular Velocity at index 23
+        angle_idx = target_rel_pos_y_idx + 1 # Index 22
+        angular_velocity_idx = target_rel_pos_y_idx + 2 # Index 23
+
+        obs[angle_idx] = (probe['angle'] % (2 * np.pi)) / (2 * np.pi)  # Normalize angle to [0, 1]
+        obs[angular_velocity_idx] = np.clip(probe['angular_velocity'], -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY) / MAX_ANGULAR_VELOCITY # Normalize to [-1,1]
             
         return obs
     
@@ -226,18 +249,20 @@ class SpaceEnvironment(gym.Env):
             # Note: Resource collection can still happen passively below
 
         # Parse action (actions might have been overridden if low_power)
-        # Action space now: [thrust_dir, thrust_power, communicate, replicate, target_select]
-        thrust_dir_actual, thrust_power_actual, communicate_actual, replicate_actual, target_select_action = action
+        # ACTION_SPACE_DIMS = [3, 5, 2, 2, NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1]
+        # linear_thrust_action, rotational_torque_action, communicate_action, replicate_action, target_select_action
+        linear_thrust_action, rotational_torque_action, communicate_action, replicate_action, target_select_action = action
         
+        # Apply penalties or restrictions if low_power
         if is_low_power:
-            thrust_dir_actual = 0
-            communicate_actual = 0
-            replicate_actual = 0
-            # target_select_action remains, but probe won't move towards it if low power.
-            # Or, we can also nullify target selection if low power:
-            # target_select_action = 0 # Optional: clear target if low power
+            # No thrust or rotation if low power
+            linear_thrust_action = 0
+            rotational_torque_action = 0
+            communicate_action = 0 # No communication
+            replicate_action = 0   # No replication
+            # target_select_action can remain, but probe won't move effectively.
         
-        # --- Target Selection Logic ---
+        # --- Target Selection Logic (remains mostly the same, uses target_select_action) ---
         if not is_low_power: # Allow target selection only if not in low power
             if target_select_action == 0:
                 probe['selected_target_info'] = None
@@ -269,35 +294,55 @@ class SpaceEnvironment(gym.Env):
                     probe['selected_target_info'] = None
                     probe['distance_to_target_last_step'] = float('inf')
         
-        # Apply thrust (Newtonian physics)
-        if thrust_dir_actual > 0:  # 0 is no thrust
-            directions = [
-                (0, 1), (1, 1), (1, 0), (1, -1),
-                (0, -1), (-1, -1), (-1, 0), (-1, 1)
-            ]
-            direction_vector = np.array(directions[thrust_dir_actual - 1], dtype=np.float32)
-            force_magnitude = THRUST_FORCE[thrust_power_actual] # Use THRUST_FORCE from config
+        # --- Rotational Torque Application ---
+        torque_applied = 0.0
+        if rotational_torque_action > 0 and not is_low_power: # Action 0 is no torque
+            # rotational_torque_action: 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
+            if rotational_torque_action == 1: # Left Low
+                torque_applied = -TORQUE_MAGNITUDES[1]
+            elif rotational_torque_action == 2: # Left High
+                torque_applied = -TORQUE_MAGNITUDES[2]
+            elif rotational_torque_action == 3: # Right Low
+                torque_applied = TORQUE_MAGNITUDES[1]
+            elif rotational_torque_action == 4: # Right High
+                torque_applied = TORQUE_MAGNITUDES[2]
+
+            if torque_applied != 0.0:
+                angular_acceleration = torque_applied / MOMENT_OF_INERTIA
+                probe['angular_velocity'] += angular_acceleration
+                
+                energy_cost_rotation = abs(torque_applied) * ROTATIONAL_ENERGY_COST_FACTOR
+                probe['energy'] = max(0, probe['energy'] - energy_cost_rotation)
+                reward -= energy_cost_rotation * 0.01 # Small penalty for energy use
+
+        # --- Linear Thrust Application (Ship-Relative) ---
+        probe['is_thrusting_visual'] = False # Reset visual flag
+        probe['thrust_power_visual'] = 0
+        if linear_thrust_action > 0 and not is_low_power: # Action 0 is no thrust
+            force_magnitude = THRUST_FORCE[linear_thrust_action] # THRUST_FORCE[0] should be 0
             
-            if force_magnitude > 0: # Should only happen if not is_low_power
+            if force_magnitude > 0:
+                # Direction is along the probe's current angle
+                direction_vector = np.array([np.cos(probe['angle']), np.sin(probe['angle'])], dtype=np.float32)
                 force_vector = direction_vector * force_magnitude
                 
                 acceleration_vector = force_vector / probe['mass']
                 probe['velocity'] += acceleration_vector
                 
-                energy_cost = force_magnitude * THRUST_ENERGY_COST_FACTOR
-                probe['energy'] = max(0, probe['energy'] - energy_cost) # Ensure energy doesn't go below 0
-                reward -= energy_cost * 0.01
+                energy_cost_linear = force_magnitude * THRUST_ENERGY_COST_FACTOR
+                probe['energy'] = max(0, probe['energy'] - energy_cost_linear)
+                reward -= energy_cost_linear * 0.01 # Small penalty for energy use
                 
-                probe['is_thrusting_visual'] = True # Set visual flag
-                probe['thrust_power_visual'] = thrust_power_actual # Store thrust power for visual
+                probe['is_thrusting_visual'] = True
+                probe['thrust_power_visual'] = linear_thrust_action
         
         # Communication
-        if communicate_actual > 0: # Should only happen if not is_low_power
+        if communicate_action > 0 and not is_low_power:
             reward += self._handle_communication(probe_id)
         
         # Replication
-        if replicate_actual > 0 and probe['energy'] > REPLICATION_MIN_ENERGY: # Check energy > REPLICATION_MIN_ENERGY
-            reward += self._handle_replication(probe_id) # Energy cost handled within
+        if replicate_action > 0 and probe['energy'] > REPLICATION_MIN_ENERGY and not is_low_power:
+            reward += self._handle_replication(probe_id)
         
         # Survival reward
         reward += 0.1
@@ -404,14 +449,18 @@ class SpaceEnvironment(gym.Env):
         return reward
     
     def _update_physics(self):
-        """Update probe positions based on velocity"""
-        for probe in self.probes.values():
-            if probe['alive']:
+        """Update probe positions and angles based on velocities"""
+        for probe_id, probe in self.probes.items(): # Iterate with ID for consistency if needed later
+            if probe['alive']: # Should always be true now, but good check
+                # Update angle and angular velocity
+                probe['angle'] = (probe['angle'] + probe['angular_velocity']) % (2 * np.pi)
+                probe['angular_velocity'] *= (1 - ANGULAR_DAMPING_FACTOR)
+                probe['angular_velocity'] = np.clip(probe['angular_velocity'], -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY)
+
+                # Update linear position and velocity
                 probe['position'] += probe['velocity']
                 probe['position'] = self._wrap_position(probe['position'])
-                # probe['velocity'] *= 0.95  # Friction removed for Newtonian motion
-                
-                # Optional: Clamp velocity to the new MAX_VELOCITY as a safety/normalization cap
+                # Linear velocity damping/friction was removed for Newtonian, but angular has damping
                 probe['velocity'] = np.clip(probe['velocity'], -MAX_VELOCITY, MAX_VELOCITY)
     
     def _regenerate_resources(self):

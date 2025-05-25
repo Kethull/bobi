@@ -151,12 +151,14 @@ class Visualization:
                 np.array([SPACESHIP_SIZE * 0.5, SPACESHIP_SIZE * 0.4])  # Right tail
             ]
 
-            velocity_vector = probe.get('velocity', np.array([0,1])) # Default to pointing up if no velocity
-            if np.linalg.norm(velocity_vector) > 0.1: # Only rotate if moving significantly
-                angle_rad = math.atan2(velocity_vector[0], -velocity_vector[1]) # Angle with positive Y axis (pointing up)
-            else:
-                angle_rad = probe.get('last_angle_rad', -math.pi/2) # Default or last angle (pointing up)
-            probe['last_angle_rad'] = angle_rad # Store for next frame if stationary
+            # Spaceship orientation is now directly from probe['angle']
+            # probe['angle'] = 0 means pointing along world +X.
+            # Spaceship base_points has nose at [0, -length], i.e., pointing along local -Y.
+            # To align local -Y with world +X, rotate by +pi/2.
+            # To align local -Y with world +Y (probe['angle']=pi/2), rotate by pi.
+            # So, the visual rotation angle for the matrix is probe['angle'] + np.pi / 2.
+            current_probe_angle = probe.get('angle', -np.pi/2) # Default to pointing up if no angle
+            angle_rad = current_probe_angle + (np.pi / 2)
             
             rotation_matrix = np.array([
                 [math.cos(angle_rad), -math.sin(angle_rad)],

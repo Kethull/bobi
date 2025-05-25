@@ -30,6 +30,16 @@ ENERGY_DECAY_RATE = 0.00
 LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
 TARGET_PROXIMITY_REWARD_FACTOR = 0.05 # Reward factor for getting closer to a selected target
 
+# Rotational Physics Configuration
+MOMENT_OF_INERTIA = 1.0  # Affects rotational acceleration (higher = slower)
+# ROTATIONAL_THRUST_TORQUE defines torque values for [None, Left_Low, Left_High, Right_Low, Right_High] actions
+# For simplicity, let's use direct torque values for actions: 0=None, 1=Torque_L1, 2=Torque_L2, 3=Torque_R1, 4=Torque_R2
+# Let's define torque magnitudes and apply direction in environment
+TORQUE_MAGNITUDES = [0.0, 0.05, 0.1] # For [None, Low, High] rotational power levels
+ROTATIONAL_ENERGY_COST_FACTOR = 0.02 # Energy cost per unit of torque applied
+MAX_ANGULAR_VELOCITY = np.pi / 4  # Max turn rate (radians/step) for normalization
+ANGULAR_DAMPING_FACTOR = 0.05    # Reduces angular velocity each step (e.g., 0.05 = 5% reduction)
+
 # Communication
 COMM_RANGE = 100
 MESSAGE_TYPES = ['RESOURCE_LOCATION']
@@ -41,13 +51,47 @@ BATCH_SIZE = 64
 
 # RL Agent Configuration
 NUM_OBSERVED_RESOURCES_FOR_TARGETING = 3 # How many nearest resources can be targeted
-OBSERVATION_SPACE_SIZE = 22 # pos(2) + vel(2) + energy(1) + age(1) + resources(3*3=9) + probes(2*2=4) + messages(1) + target_rel_pos(2) + target_active(1)
+# OBSERVATION_SPACE_SIZE:
+# Base (19 values): pos(2), vel(2), energy(1), age(1), resources(3*3=9), probes(2*2=4), messages(1)
+# Target info (3 values): target_active(1), target_rel_pos(2)
+# Rotational info (2 values): angle(1), angular_velocity(1)
+# Total = 19 + 3 + 2 = 24.  Wait, this is still the old calculation.
+# Let's list them out carefully:
+# 1. pos_x, pos_y (2)
+# 2. vel_x, vel_y (2)
+# 3. energy (1)
+# 4. age (1)
+# 5. resource1_dx, resource1_dy, resource1_amt (3)
+# 6. resource2_dx, resource2_dy, resource2_amt (3)
+# 7. resource3_dx, resource3_dy, resource3_amt (3)
+# 8. probe1_dist, probe1_energy (2)
+# 9. probe2_dist, probe2_energy (2)
+# 10. message_count (1)
+# --- Subtotal so far: 2+2+1+1+3+3+3+2+2+1 = 20. This is different from the "Base (19)" comment.
+# Let's use the previous diff's indexing logic for environment.py as the source of truth for counts:
+# Own state: 6 (indices 0-5)
+# Resources (NUM_OBSERVED_RESOURCES_FOR_TARGETING * 3): 9 (indices 6-14)
+# Other Probes (2 * 2): 4 (indices 15-18)
+# Messages: 1 (index 19)
+# Target Active: 1 (index 20)
+# Target Rel Pos (X, Y): 2 (indices 21-22)
+# Angle: 1 (index 23)
+# Angular Velocity: 1 (index 24)
+# Total size needed is 25 (for indices 0-24).
+OBSERVATION_SPACE_SIZE = 25
+
+# ACTION_SPACE_DIMS:
+# 1. Linear Thrust Power (forward only): 0=None, 1=Low, 2=High (3 options)
+# 2. Rotational Torque: 0=None, 1=Left_Low, 2=Left_High, 3=Right_Low, 4=Right_High (5 options)
+# 3. Communicate: 0=No, 1=Yes (2 options)
+# 4. Replicate: 0=No, 1=Yes (2 options)
+# 5. Target Select: 0=None, 1-N for observed resources (NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1 options)
 ACTION_SPACE_DIMS = [
-    9,  # thrust_dir (0=None, 1-8=directions)
-    3,  # thrust_power (0-2)
-    2,  # communicate (0=No, 1=Yes)
-    2,  # replicate (0=No, 1=Yes)
-    NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1  # target_select (0=None, 1-N=select_observed_resource_N)
+    3,  # Linear thrust power (0=None, 1=Low, 2=High)
+    5,  # Rotational torque (0=None, 1=L_Low, 2=L_High, 3=R_Low, 4=R_High)
+    2,  # Communicate
+    2,  # Replicate
+    NUM_OBSERVED_RESOURCES_FOR_TARGETING + 1
 ]
 
 # Visualization
