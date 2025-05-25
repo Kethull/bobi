@@ -83,6 +83,8 @@ class SpaceEnvironment(gym.Env):
             'distance_to_target_last_step': float('inf'), # For target proximity reward
             'angle': random.uniform(0, 2 * np.pi), # Initial orientation in radians
             'angular_velocity': 0.0, # Initial angular velocity in radians/step
+            'last_target_switch_time': 0, # For target switching cooldown
+            'current_target_id': None, # Actual ID of the currently selected resource, for anti-spam
             'action_smoothing_state': {
                 'previous_linear_action': 0,
                 'previous_rotation_action': 0, # This was in the prompt but might not be directly used if blending raw actions
@@ -443,29 +445,62 @@ class SpaceEnvironment(gym.Env):
         
         # --- Target Selection Logic --- (Using raw_target_select_action)
         if not is_low_power:
-            if raw_target_select_action == 0:
+            can_switch_target = (self.step_count - probe.get('last_target_switch_time', 0)) >= TARGET_SWITCH_COOLDOWN
+            
+            if raw_target_select_action == 0: # Action to clear target
+                if probe.get('current_target_id') is not None: # If there was an active target
+                    probe['last_target_switch_time'] = self.step_count # Clearing a target also counts as a switch for cooldown
                 probe['selected_target_info'] = None
                 probe['distance_to_target_last_step'] = float('inf')
-            elif raw_target_select_action > 0:
+                probe['current_target_id'] = None
+            elif raw_target_select_action > 0: # Action to select a new target
+                target_idx_in_observed_list = raw_target_select_action - 1
+                
                 observed_resource_distances = []
                 for r_idx, resource in enumerate(self.resources):
                     if resource.amount > 0:
                         dist = self._distance(probe['position'], resource.position)
+                        # Store the actual resource index (r_idx) as 'id'
                         observed_resource_distances.append({'dist': dist, 'id': r_idx, 'world_pos': resource.position})
                 observed_resource_distances.sort(key=lambda r: r['dist'])
-                
-                target_idx_in_observed_list = raw_target_select_action - 1
+
                 if target_idx_in_observed_list < len(observed_resource_distances) and \
                    target_idx_in_observed_list < NUM_OBSERVED_RESOURCES_FOR_TARGETING:
+                    
                     selected_res_info = observed_resource_distances[target_idx_in_observed_list]
-                    probe['selected_target_info'] = {
-                        'type': 'resource', 'id': selected_res_info['id'],
-                        'world_pos': selected_res_info['world_pos']
-                    }
-                    probe['distance_to_target_last_step'] = selected_res_info['dist']
+                    new_target_resource_id = selected_res_info['id'] # This is the actual index in self.resources
+
+                    # Check if switching to a *different* target
+                    if new_target_resource_id != probe.get('current_target_id'):
+                        if can_switch_target:
+                            probe['energy'] = max(0, probe['energy'] - TARGET_SWITCH_ENERGY_COST)
+                            reward -= TARGET_SWITCH_ENERGY_COST * 0.1 # Small penalty for switching
+                            probe['selected_target_info'] = {
+                                'type': 'resource', 'id': new_target_resource_id, # Store actual resource ID
+                                'world_pos': selected_res_info['world_pos']
+                            }
+                            probe['distance_to_target_last_step'] = selected_res_info['dist']
+                            probe['current_target_id'] = new_target_resource_id
+                            probe['last_target_switch_time'] = self.step_count
+                        else:
+                            # Cannot switch yet (cooldown active), so no change to target, maybe a small penalty
+                            reward -= 0.05 # Small penalty for attempting to switch during cooldown
+                            pass # Target remains unchanged
+                    else:
+                        # Re-selecting the same target, no cost/cooldown, just update info if needed
+                        probe['selected_target_info'] = {
+                            'type': 'resource', 'id': new_target_resource_id,
+                            'world_pos': selected_res_info['world_pos']
+                        }
+                        probe['distance_to_target_last_step'] = selected_res_info['dist']
+                        # probe['current_target_id'] is already new_target_resource_id
                 else:
+                    # Invalid target selection index, clear target
+                    if probe.get('current_target_id') is not None:
+                         probe['last_target_switch_time'] = self.step_count
                     probe['selected_target_info'] = None
                     probe['distance_to_target_last_step'] = float('inf')
+                    probe['current_target_id'] = None
         
         # --- Communication --- (Using raw_communicate_action)
         if raw_communicate_action > 0 and not is_low_power:
@@ -493,9 +528,23 @@ class SpaceEnvironment(gym.Env):
         if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
             target_world_pos = probe['selected_target_info']['world_pos']
             current_distance_to_target = self._distance(probe['position'], target_world_pos)
+            
             if probe['distance_to_target_last_step'] != float('inf'):
                 distance_delta = probe['distance_to_target_last_step'] - current_distance_to_target
-                if distance_delta > 0: reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR
+                if distance_delta > 0: # If moved closer
+                    # Non-linear reward: reward increases as 1/(distance + falloff)
+                    # This means the reward for the *same* distance_delta is higher when closer.
+                    # Ensure current_distance_to_target is not zero or too small to cause extreme rewards.
+                    # PROXIMITY_REWARD_FALLOFF helps prevent division by zero and tunes the curve.
+                    # A smaller PROXIMITY_REWARD_FALLOFF makes the reward spike more sharply at close distances.
+                    # max(0.1, current_distance_to_target) prevents division by zero if distance is 0.
+                    proximity_bonus_factor = (1.0 / (max(0.1, current_distance_to_target) + PROXIMITY_REWARD_FALLOFF))
+                    
+                    # The reward is the distance covered, scaled by the base factor, and then amplified by the proximity bonus.
+                    # The (1 + proximity_bonus_factor * 5.0) term means the bonus can significantly increase the reward.
+                    # Adjust the '5.0' to control the strength of the non-linear effect.
+                    reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR * (1 + proximity_bonus_factor * 5.0)
+                    
             probe['distance_to_target_last_step'] = current_distance_to_target
 
         reward += self._handle_resource_collection(probe_id) # Resource collection

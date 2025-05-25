@@ -28,7 +28,10 @@ THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]
 THRUST_ENERGY_COST_FACTOR = 0.02  # Lower cost for more action
 ENERGY_DECAY_RATE = 0.008  # Slightly lower decay
 LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
-TARGET_PROXIMITY_REWARD_FACTOR = 1.95 # Reward factor for getting closer to a selected target
+TARGET_PROXIMITY_REWARD_FACTOR = 1.95 # Base reward factor for getting closer to a selected target
+PROXIMITY_REWARD_FALLOFF = 5.0 # Smaller value = sharper reward increase at very close distances. Added to distance in denominator.
+TARGET_SWITCH_ENERGY_COST = 1.0 # Energy cost for switching to a different resource target
+TARGET_SWITCH_COOLDOWN = 20     # Steps a probe must wait before switching to another different resource target without penalty
 
 # Rotational Physics Configuration
 MOMENT_OF_INERTIA = 5.0  # Affects rotational acceleration (higher = slower)
@@ -58,7 +61,7 @@ COMM_RANGE = 100
 MESSAGE_TYPES = ['RESOURCE_LOCATION']
 
 # Debug Configuration
-DEBUG_MODE = True  # Set to True to enable debug features
+DEBUG_MODE = False  # Set to True to enable debug features
 DEBUG_ENERGY_RESET_VALUE = 50.0 # Energy value to reset to if probe runs out in debug mode
 
 # Training Configuration
