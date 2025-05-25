@@ -52,7 +52,8 @@ class OrbitalMechanics:
         if dist_abs_meters == 0:
              return np.array([0.0, 0.0], dtype=np.float64)
 
-        force_vector_newtons = force_magnitude_newtons * (dist_vector_meters / dist_abs_meters)
+        # Force should be attractive, so in the opposite direction of dist_vector_meters (which is Sun to Planet)
+        force_vector_newtons = -force_magnitude_newtons * (dist_vector_meters / dist_abs_meters)
         return force_vector_newtons # This is F in Newtons (m*kg/s^2)
 
     def update_celestial_body_positions(self, celestial_bodies: List[CelestialBody], sun_mass_kg: float, dt_seconds: float):
