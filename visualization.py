@@ -33,6 +33,7 @@ class Visualization:
         self.ui_probe_id_rects = {} # Will be managed by ModernUI or adapted
         self.probe_trails = {} # Keep for now, might be replaced or enhanced
         self.camera_offset = np.array([0.0, 0.0]) # For starfield parallax
+        self.zoom_level = 16.0 # Initial zoom level to show about 5 AU diameter
         
         # Colors (old color dict, ModernUI has its own, this might be phased out)
         self.colors = {
@@ -64,9 +65,9 @@ class Visualization:
         offset_x = world_pos[0] - (WORLD_SIZE / 2)
         offset_y = world_pos[1] - (WORLD_SIZE / 2)
 
-        # Scale the offset and add the screen center
-        screen_x = int(offset_x * self.scale_x + SCREEN_WIDTH / 2)
-        screen_y = int(offset_y * self.scale_y + SCREEN_HEIGHT / 2)
+        # Scale the offset by zoom level and add the screen center
+        screen_x = int(offset_x * self.scale_x * self.zoom_level + SCREEN_WIDTH / 2)
+        screen_y = int(offset_y * self.scale_y * self.zoom_level + SCREEN_HEIGHT / 2)
 
         return (screen_x, screen_y)
     
@@ -111,8 +112,9 @@ class Visualization:
             celestial_data = environment.get_celestial_bodies_data_for_render()
             for body_data in celestial_data:
                 screen_pos = self.world_to_screen(body_data['position'])
-                screen_radius = int(body_data['radius_sim'])
-                screen_radius = max(1, screen_radius)
+                # Scale radius by zoom_level, ensuring a minimum pixel size
+                screen_radius = int(body_data['radius_sim'] * self.zoom_level)
+                screen_radius = max(1, screen_radius) # Ensure at least 1 pixel radius
                 pygame.draw.circle(self.screen, body_data['color'], screen_pos, screen_radius)
                 # Optional: Draw name labels
                 # text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
@@ -352,16 +354,26 @@ class Visualization:
             # Check if the UI handled the event and if there's a probe selection change
             if ui_event_result:
                 if 'selected_probe_id' in ui_event_result:
-                    # Update selected_probe_id_ui based on UI interaction
-                    # This allows ModernUI to control selection.
-                    # If ui_event_result['selected_probe_id'] is None, it deselects.
                     self.selected_probe_id_ui = ui_event_result['selected_probe_id']
                 
                 if ui_event_result.get('event_consumed', False):
-                    continue # If UI consumed the event, no further processing here for this event
+                    continue
 
-            # Add other non-UI event handling here if needed, for example, keyboard shortcuts
-            # for camera control, pausing the simulation, etc.
-            # For now, we only have QUIT and UI events.
+            # Handle zoom keys
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
+                    self.zoom_level *= 1.2 # Zoom in
+                elif event.key == pygame.K_MINUS:
+                    self.zoom_level /= 1.2 # Zoom out
+                self.zoom_level = max(0.0001, self.zoom_level) # Prevent zoom from becoming zero or negative
+
+            # Mouse wheel for zoom
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 4: # Scroll up, zoom in
+                    self.zoom_level *= 1.1
+                elif event.button == 5: # Scroll down, zoom out
+                    self.zoom_level /= 1.1
+                self.zoom_level = max(0.0001, self.zoom_level)
+
 
         return True # Signal to continue the main loop

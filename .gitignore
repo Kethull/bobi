@@ -19,3 +19,6 @@ __pycache__/organic_ship_renderer.cpython-313.pyc
 __pycache__/solarsystem.cpython-313.pyc
 ppo_bobiverse_tensorboard/PPO_10/events.out.tfevents.1748186386.DESKTOP-Q46LAM5.15500.0
 ppo_bobiverse_tensorboard/PPO_9/events.out.tfevents.1748184675.DESKTOP-Q46LAM5.7464.0
+ppo_bobiverse_tensorboard/PPO_11/events.out.tfevents.1748186620.DESKTOP-Q46LAM5.4008.0
+ppo_bobiverse_tensorboard/PPO_12/events.out.tfevents.1748186822.DESKTOP-Q46LAM5.15888.0
+ppo_bobiverse_tensorboard/PPO_13/events.out.tfevents.1748187141.DESKTOP-Q46LAM5.12808.0
