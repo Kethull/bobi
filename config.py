@@ -15,7 +15,8 @@ RESOURCE_REGEN_RATE = 0.00  # units per step
 HARVEST_RATE = 2.0
 HARVEST_DISTANCE = 5
 DISCOVERY_RANGE = HARVEST_DISTANCE * 2.5 # Range within which a resource is "discovered"
-RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource
+RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource (kept for compatibility, new factor preferred)
+RESOURCE_DISCOVERY_REWARD_FACTOR = 0.05 # Reward per unit of discovered resource amount
 
 # Probe Configuration
 MAX_ENERGY = 1000
@@ -28,7 +29,12 @@ THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]
 THRUST_ENERGY_COST_FACTOR = 0.001  # Lower cost for more action
 ENERGY_DECAY_RATE = 0.001  # Slightly lower decay
 LOW_POWER_PENALTY = 0.9 # New - Penalty per step for being in low power mode (energy <= 0)
+SUSTAINED_MINING_REWARD_PER_STEP = 0.05 # Small reward for each step actively mining a valid target
+HIGH_ENERGY_THRESHOLD = 0.75 # Percentage of MAX_ENERGY to qualify for high energy bonus
+HIGH_ENERGY_REWARD_BONUS = 0.1 # Bonus reward for maintaining energy above threshold
 TARGET_PROXIMITY_REWARD_FACTOR = 1.95 # Base reward factor for getting closer to a selected target
+MOVE_AWAY_FROM_TARGET_PENALTY_FACTOR = 0.5 # Penalty factor for moving away from selected target
+REACH_TARGET_BONUS = 2.0 # One-time bonus for reaching a selected target
 PROXIMITY_REWARD_FALLOFF = 5.0 # Smaller value = sharper reward increase at very close distances. Added to distance in denominator.
 TARGET_SWITCH_ENERGY_COST = 1.0 # Energy cost for switching to a different resource target
 TARGET_SWITCH_COOLDOWN = 20     # Steps a probe must wait before switching to another different resource target without penalty

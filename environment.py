@@ -86,6 +86,7 @@ class SpaceEnvironment(gym.Env):
             'angular_velocity': 0.0, # Initial angular velocity in radians/step
             'last_target_switch_time': 0, # For target switching cooldown
             'current_target_id': None, # Actual ID of the currently selected resource, for anti-spam
+            'has_reached_current_target': False, # For one-time bonus upon reaching selected target
             'action_smoothing_state': {
                 'previous_linear_action': 0,
                 'previous_rotation_action': 0, # This was in the prompt but might not be directly used if blending raw actions
@@ -454,6 +455,7 @@ class SpaceEnvironment(gym.Env):
                 probe['selected_target_info'] = None
                 probe['distance_to_target_last_step'] = float('inf')
                 probe['current_target_id'] = None
+                probe['has_reached_current_target'] = False # Reset flag when target is cleared
             elif raw_target_select_action > 0: # Action to select a new target
                 target_idx_in_observed_list = raw_target_select_action - 1
                 
@@ -483,6 +485,7 @@ class SpaceEnvironment(gym.Env):
                             probe['distance_to_target_last_step'] = selected_res_info['dist']
                             probe['current_target_id'] = new_target_resource_id
                             probe['last_target_switch_time'] = self.step_count
+                            probe['has_reached_current_target'] = False # Reset flag when new target is selected
                         else:
                             # Cannot switch yet (cooldown active), so no change to target, maybe a small penalty
                             reward -= 0.05 # Small penalty for attempting to switch during cooldown
@@ -502,6 +505,7 @@ class SpaceEnvironment(gym.Env):
                     probe['selected_target_info'] = None
                     probe['distance_to_target_last_step'] = float('inf')
                     probe['current_target_id'] = None
+                    probe['has_reached_current_target'] = False # Reset flag
         
         # --- Communication --- (Using raw_communicate_action)
         if raw_communicate_action > 0 and not is_low_power:
@@ -524,7 +528,8 @@ class SpaceEnvironment(gym.Env):
                 dist_to_resource = self._distance(probe['position'], resource_node.position)
                 if dist_to_resource < DISCOVERY_RANGE:
                     probe['discovered_resources'].add(res_idx)
-                    reward += RESOURCE_DISCOVERY_REWARD # Resource discovery reward
+                    # Value-Based Resource Discovery
+                    reward += RESOURCE_DISCOVERY_REWARD_FACTOR * resource_node.amount
         
         if probe.get('selected_target_info') and probe['selected_target_info'].get('world_pos') is not None:
             target_world_pos = probe['selected_target_info']['world_pos']
@@ -545,13 +550,25 @@ class SpaceEnvironment(gym.Env):
                     # The (1 + proximity_bonus_factor * 5.0) term means the bonus can significantly increase the reward.
                     # Adjust the '5.0' to control the strength of the non-linear effect.
                     reward += distance_delta * TARGET_PROXIMITY_REWARD_FACTOR * (1 + proximity_bonus_factor * 5.0)
-                    
+                elif distance_delta < 0: # Moved away from target
+                    # Penalty for Moving Away from Target
+                    reward -= abs(distance_delta) * MOVE_AWAY_FROM_TARGET_PENALTY_FACTOR
+            
+            # Reward for Reaching Target (one-time bonus)
+            if not probe.get('has_reached_current_target', False) and current_distance_to_target < HARVEST_DISTANCE:
+                reward += REACH_TARGET_BONUS
+                probe['has_reached_current_target'] = True
+                
             probe['distance_to_target_last_step'] = current_distance_to_target
 
         reward += self._handle_resource_collection(probe_id) # Resource collection
         
         probe['age'] += 1
         probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE)
+
+        # Energy Management Incentives
+        if probe['energy'] > MAX_ENERGY * HIGH_ENERGY_THRESHOLD:
+            reward += HIGH_ENERGY_REWARD_BONUS
         
         # --- DEBUG MODE: Energy Reset ---
         if DEBUG_MODE and probe['energy'] <= 0:
@@ -619,7 +636,21 @@ class SpaceEnvironment(gym.Env):
                 harvested = resource.harvest(HARVEST_RATE)
                 self.total_resources_mined += harvested
                 probe['energy'] = min(MAX_ENERGY, probe['energy'] + harvested)
-                reward += harvested * 5.0  # Resource collection reward
+                reward += harvested * 5.0  # Resource collection reward (base)
+                
+                # Sustained Mining Incentive
+                # Check if the currently harvested resource is the probe's selected target
+                selected_target_info = probe.get('selected_target_info')
+                if selected_target_info and selected_target_info.get('type') == 'resource':
+                    # Assuming resource objects themselves are not directly stored as IDs,
+                    # we might need to compare positions or have a unique ID for resources if not using index.
+                    # For now, let's assume selected_target_info['id'] is the index of the resource in self.resources
+                    # This requires ensuring selected_target_info['id'] is indeed the index.
+                    # A safer way if resource objects can change order or are not indexed directly:
+                    # Compare resource.position with selected_target_info['world_pos']
+                    if np.array_equal(resource.position, selected_target_info['world_pos']):
+                         reward += SUSTAINED_MINING_REWARD_PER_STEP
+
                 probe['is_mining_visual'] = True
                 probe['mining_target_pos_visual'] = resource.position
         
