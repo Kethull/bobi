@@ -40,3 +40,4 @@ BATCH_SIZE = 64
 SCREEN_WIDTH = 1200
 SCREEN_HEIGHT = 800
 FPS = 60
+SPACESHIP_SIZE = 12 # New - Visual size of the spaceship

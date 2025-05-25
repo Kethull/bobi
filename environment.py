@@ -73,7 +73,9 @@ class SpaceEnvironment(gym.Env):
             'visited_positions': set(),
             'total_reward': 0,
             'alive': True,
-            'mass': PROBE_MASS  # Initialize probe mass
+            'mass': PROBE_MASS,  # Initialize probe mass
+            'is_thrusting_visual': False, # For visualization
+            'thrust_power_visual': 0      # For visualization
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -165,6 +167,9 @@ class SpaceEnvironment(gym.Env):
         """Process a single probe's action and return reward"""
         probe = self.probes[probe_id]
         reward = 0.0
+        probe['is_thrusting_visual'] = False # Reset visual flag each step
+        probe['thrust_power_visual'] = 0     # Reset visual thrust power
+
         is_low_power = probe['energy'] <= 0
 
         if is_low_power:
@@ -200,6 +205,9 @@ class SpaceEnvironment(gym.Env):
                 energy_cost = force_magnitude * THRUST_ENERGY_COST_FACTOR
                 probe['energy'] = max(0, probe['energy'] - energy_cost) # Ensure energy doesn't go below 0
                 reward -= energy_cost * 0.01
+                
+                probe['is_thrusting_visual'] = True # Set visual flag
+                probe['thrust_power_visual'] = thrust_power_actual # Store thrust power for visual
         
         # Communication
         if communicate_actual > 0: # Should only happen if not is_low_power

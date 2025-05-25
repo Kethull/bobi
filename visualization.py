@@ -135,29 +135,87 @@ class Visualization:
                 generation = min(probe['generation'], len(generation_colors) - 1)
                 color = generation_colors[generation]
             
-            # Probe size based on energy (energy can be 0)
-            size = max(3, int(max(0, probe['energy']) / MAX_ENERGY * 8) + 3)
-            pygame.draw.circle(self.screen, color, screen_pos, size)
-            pygame.draw.circle(self.screen, (255, 255, 255), screen_pos, size, 1) # Outline
+            # Spaceship drawing
+            # base_ship_size = max(5, int(max(0, probe['energy']) / MAX_ENERGY * 10) + 5) # General size factor
+            # Use fixed SPACESHIP_SIZE from config
             
-            # Draw probe ID
+            # Define base spaceship shape (triangle pointing up)
+            # Points relative to (0,0) center
+            #       A (0, -SPACESHIP_SIZE*0.8)
+            #      / \
+            #     /   \
+            # B(-SPACESHIP_SIZE*0.5, SPACESHIP_SIZE*0.4) C(SPACESHIP_SIZE*0.5, SPACESHIP_SIZE*0.4)
+            base_points = [
+                np.array([0, -SPACESHIP_SIZE * 0.8]),  # Nose
+                np.array([-SPACESHIP_SIZE * 0.5, SPACESHIP_SIZE * 0.4]), # Left tail
+                np.array([SPACESHIP_SIZE * 0.5, SPACESHIP_SIZE * 0.4])  # Right tail
+            ]
+
+            velocity_vector = probe.get('velocity', np.array([0,1])) # Default to pointing up if no velocity
+            if np.linalg.norm(velocity_vector) > 0.1: # Only rotate if moving significantly
+                angle_rad = math.atan2(velocity_vector[0], -velocity_vector[1]) # Angle with positive Y axis (pointing up)
+            else:
+                angle_rad = probe.get('last_angle_rad', -math.pi/2) # Default or last angle (pointing up)
+            probe['last_angle_rad'] = angle_rad # Store for next frame if stationary
+            
+            rotation_matrix = np.array([
+                [math.cos(angle_rad), -math.sin(angle_rad)],
+                [math.sin(angle_rad), math.cos(angle_rad)]
+            ])
+            
+            rotated_points = [rotation_matrix @ p for p in base_points]
+            screen_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_points]
+            
+            pygame.draw.polygon(self.screen, color, screen_points)
+            pygame.draw.polygon(self.screen, (200, 200, 200), screen_points, 1) # Outline
+
+            # Draw thruster flame if active
+            if probe.get('is_thrusting_visual', False) and not is_low_power:
+                thrust_power_level = probe.get('thrust_power_visual', 0) # 0, 1, or 2
+                flame_length_factor = 0.5 + (thrust_power_level / 2.0) * 0.8 # Scale from 0.5 to 1.3 of SPACESHIP_SIZE
+                flame_length = SPACESHIP_SIZE * flame_length_factor
+                flame_width = SPACESHIP_SIZE * 0.4
+
+                # Flame points relative to ship's rear center, extending "down" in ship's local coords
+                # Ship's rear center is roughly (0, SPACESHIP_SIZE * 0.4)
+                # Tip of flame: (0, SPACESHIP_SIZE * 0.4 + flame_length)
+                # Base corners: (-flame_width/2, SPACESHIP_SIZE * 0.4), (flame_width/2, SPACESHIP_SIZE * 0.4)
+                base_flame_points = [
+                    np.array([0, SPACESHIP_SIZE * 0.4 + flame_length]), # Tip
+                    np.array([-flame_width * 0.5, SPACESHIP_SIZE * 0.4]),  # Left base
+                    np.array([flame_width * 0.5, SPACESHIP_SIZE * 0.4])   # Right base
+                ]
+                
+                rotated_flame_points = [rotation_matrix @ p for p in base_flame_points]
+                screen_flame_points = [(rp[0] + screen_pos[0], rp[1] + screen_pos[1]) for rp in rotated_flame_points]
+                
+                flame_color = (255, 255, 100) # Yellowish
+                if thrust_power_level == 2 : # Max thrust
+                    flame_color = (255,165,0) # Orange
+                elif thrust_power_level == 1:
+                    flame_color = (255,255,0) # Yellow
+                
+                pygame.draw.polygon(self.screen, flame_color, screen_flame_points)
+
+            # Draw probe ID (adjust position based on spaceship size)
             id_text_color = (150, 150, 150) if is_low_power else (255, 255, 255)
             id_text_content = str(probe_id) + (" (LP)" if is_low_power else "")
-            text = self.small_font.render(id_text_content, True, id_text_color)
-            self.screen.blit(text, (screen_pos[0] + size + 2, screen_pos[1] - 8))
+            text_surface = self.small_font.render(id_text_content, True, id_text_color)
+            # Position text slightly above the ship's center
+            text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - SPACESHIP_SIZE - 5))
+            self.screen.blit(text_surface, text_rect)
             
-            # Draw energy bar (only if not in low power, or always draw background)
-            if not is_low_power: # Or always draw and it will just be empty
+            # Draw energy bar (only if not in low power)
+            if not is_low_power:
                 bar_width = 20
                 bar_height = 4
+                # Position bar below the ship
                 bar_x = screen_pos[0] - bar_width // 2
-                bar_y = screen_pos[1] - size - 8
+                bar_y = screen_pos[1] + SPACESHIP_SIZE * 0.5 + 5 # Below the ship
                 
-                # Background
                 pygame.draw.rect(self.screen, (100, 100, 100),
-                               (bar_x, bar_y, bar_width, bar_height))
+                               (bar_x, bar_y, bar_width, bar_height)) # Background
                 
-                # Energy level (ensure energy_width is not negative)
                 energy_width = int((max(0, probe['energy']) / MAX_ENERGY) * bar_width)
                 energy_color = (255, 255, 0) if probe['energy'] > 30 else (255, 100, 100)
                 pygame.draw.rect(self.screen, energy_color,
