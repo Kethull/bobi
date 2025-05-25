@@ -8,7 +8,7 @@ MAX_PROBES = 20
 INITIAL_PROBES = 3
 
 # Resource Configuration
-RESOURCE_COUNT = 30
+RESOURCE_COUNT = 1
 RESOURCE_MIN_AMOUNT = 50
 RESOURCE_MAX_AMOUNT = 200
 RESOURCE_REGEN_RATE = 0.00  # units per step
@@ -39,6 +39,13 @@ PROXIMITY_REWARD_FALLOFF = 5.0 # Smaller value = sharper reward increase at very
 TARGET_SWITCH_ENERGY_COST = 1.0 # Energy cost for switching to a different resource target
 TARGET_SWITCH_COOLDOWN = 20     # Steps a probe must wait before switching to another different resource target without penalty
 
+# Reward Shaping
+CRITICAL_ENERGY_THRESHOLD = 0.10  # Fraction of MAX_ENERGY below which is critical, but not zero
+STAY_ALIVE_REWARD_BONUS = 0.02  # Small reward per step for being above CRITICAL_ENERGY_THRESHOLD
+LOW_ENERGY_PENALTY_LEVEL_1_THRESHOLD = 0.25  # e.g., 25% energy
+LOW_ENERGY_PENALTY_LEVEL_1_FACTOR = 0.1  # Penalty factor if energy is below this but above level 2
+LOW_ENERGY_PENALTY_LEVEL_2_THRESHOLD = 0.10  # e.g., 10% energy
+LOW_ENERGY_PENALTY_LEVEL_2_FACTOR = 0.3  # Penalty factor if energy is below this but above zero
 # Rotational Physics Configuration
 MOMENT_OF_INERTIA = 5.0  # Affects rotational acceleration (higher = slower)
 # ROTATIONAL_THRUST_TORQUE defines torque values for [None, Left_Low, Left_High, Right_Low, Right_High] actions

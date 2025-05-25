@@ -32,6 +32,7 @@ class ProbeAgent:
                 learning_rate=LEARNING_RATE,
                 n_steps=2048,
                 batch_size=BATCH_SIZE,
+                ent_coef=0.01,
                 verbose=0,
                 device='cpu'  # Force CPU
             )
@@ -45,6 +46,7 @@ class ProbeAgent:
             learning_rate=LEARNING_RATE,
             n_steps=2048,
             batch_size=BATCH_SIZE,
+            ent_coef=0.01,
             verbose=0,
             device='cpu'  # Force CPU
         )

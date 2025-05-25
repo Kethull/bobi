@@ -267,6 +267,12 @@ class SpaceEnvironment(gym.Env):
         probe['is_mining_visual'] = False
         probe['mining_target_pos_visual'] = None
 
+        # Scaled Penalty for Low Energy
+        if 0 < probe['energy'] <= MAX_ENERGY * LOW_ENERGY_PENALTY_LEVEL_2_THRESHOLD:
+            reward -= LOW_ENERGY_PENALTY_LEVEL_2_FACTOR
+        elif 0 < probe['energy'] <= MAX_ENERGY * LOW_ENERGY_PENALTY_LEVEL_1_THRESHOLD:
+            reward -= LOW_ENERGY_PENALTY_LEVEL_1_FACTOR
+
         is_low_power = probe['energy'] <= 0
         if is_low_power:
             reward -= LOW_POWER_PENALTY
@@ -568,6 +574,10 @@ class SpaceEnvironment(gym.Env):
         # Energy Management Incentives
         if probe['energy'] > MAX_ENERGY * HIGH_ENERGY_THRESHOLD:
             reward += HIGH_ENERGY_REWARD_BONUS
+
+        # Stronger 'Stay Alive' Signal
+        if probe['energy'] > MAX_ENERGY * CRITICAL_ENERGY_THRESHOLD and probe['energy'] > 0:
+            reward += STAY_ALIVE_REWARD_BONUS
         
         # --- DEBUG MODE: Energy Reset ---
         if DEBUG_MODE and probe['energy'] <= 0:
