@@ -18,31 +18,35 @@ class ModernUI:
             self.small_font = pygame.font.SysFont("arial", 13)
 
         self.ui_colors = {
-            'panel_bg': (10, 30, 50, 190), # Darker, more saturated blue, slightly more alpha
-            'panel_border': (30, 120, 220, 200), # Brighter border
-            'text_primary': (210, 230, 255), # Lighter primary text
-            'text_secondary': (150, 170, 200), # Lighter secondary
+            'panel_bg': (10, 30, 50, 190), 
+            'panel_border': (30, 120, 220, 200),
+            'text_primary': (210, 230, 255),
+            'text_secondary': (150, 170, 200),
             'accent_blue': (50, 180, 255),
             'accent_green': (50, 220, 120),
             'accent_yellow': (255, 220, 80),
             'accent_red': (255, 120, 120),
-            'meter_bg': (25, 45, 65), # Slightly lighter meter bg
-            'meter_fill': (50, 180, 255) # Consistent with accent_blue
+            'meter_bg': (25, 45, 65),
+            'meter_fill': (50, 180, 255)
         }
-        self.line_height = 18 # For ui_font
-        self.small_line_height = 15 # For small_font
-        self.title_line_height = 24 # For title_font
+        self.line_height = 18 
+        self.small_line_height = 15
+        self.title_line_height = 24
 
-    def draw_holographic_panel(self, surface, rect, title="", content_lines=None, scroll_offset_y=0):
+        # UI state variables
+        self.clickable_elements = {}
+        self.probe_list_scroll_offset = 0
+        self.probe_list_panel_height = 220  # Default height for the probe list panel
+        self.probe_list_item_height = self.small_line_height + 4 # Approx height for each item (font + padding)
+
+    def draw_holographic_panel(self, surface, rect, title="", content_lines=None, scroll_offset_y=0, item_type_for_clickables=None):
         if content_lines is None: content_lines = []
             
         panel_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        pygame.draw.rect(panel_surf, self.ui_colors['panel_bg'], panel_surf.get_rect(), border_radius=3) # Slight rounding
+        pygame.draw.rect(panel_surf, self.ui_colors['panel_bg'], panel_surf.get_rect(), border_radius=3)
         
-        # Border
         pygame.draw.rect(panel_surf, self.ui_colors['panel_border'], panel_surf.get_rect(), 2, border_radius=3)
         
-        # Corner accents (simplified)
         corner_size = 8
         accent_color = self.ui_colors['accent_blue']
         pygame.draw.line(panel_surf, accent_color, (2, corner_size), (corner_size, 2), 2)
@@ -50,26 +54,22 @@ class ModernUI:
         pygame.draw.line(panel_surf, accent_color, (2, rect.height - corner_size), (corner_size, rect.height - 2), 2)
         pygame.draw.line(panel_surf, accent_color, (rect.width - 2, rect.height - corner_size), (rect.width - corner_size, rect.height - 2), 2)
         
-        content_clip_rect = pygame.Rect(5, 5, rect.width - 10, rect.height - 10)
-        panel_surf.set_clip(content_clip_rect)
+        # This is the clipping rect for the panel's content area, relative to panel_surf
+        content_clip_rect_on_panel_surf = pygame.Rect(5, 5, rect.width - 10, rect.height - 10)
+        panel_surf.set_clip(content_clip_rect_on_panel_surf)
 
-        y_offset = 10 - scroll_offset_y
+        y_offset = 10 - scroll_offset_y # Initial y position for content on panel_surf
         if title:
             title_surf = self.title_font.render(title, True, self.ui_colors['text_primary'])
             panel_surf.blit(title_surf, (10, y_offset))
             y_offset += self.title_line_height 
         
         for line_idx, line_item in enumerate(content_lines):
-            if y_offset < -self.line_height : # Content scrolled completely above panel top
-                y_offset += self.line_height # Still increment y_offset to calculate total content height
-                continue
-            if y_offset > rect.height - 10: # Content scrolled below panel bottom
-                break 
-
+            # Calculate current line height based on font
             text_to_render = ""
             color_to_use = self.ui_colors['text_secondary']
             font_to_use = self.ui_font
-            current_line_height = self.line_height
+            current_actual_line_height = self.line_height # Use actual font height for this item
 
             if isinstance(line_item, dict):
                 text_to_render = line_item.get('text', '')
@@ -77,21 +77,69 @@ class ModernUI:
                 font_choice = line_item.get('font', 'default')
                 if font_choice == 'title': 
                     font_to_use = self.title_font
-                    current_line_height = self.title_line_height
+                    current_actual_line_height = self.title_line_height
                 elif font_choice == 'small':
                     font_to_use = self.small_font
-                    current_line_height = self.small_line_height
+                    current_actual_line_height = self.small_line_height
             else:
                 text_to_render = str(line_item)
+
+            # Check if item is outside visible area before rendering (optimization)
+            if y_offset >= rect.height - 5 : # Item starts below panel bottom padding
+                 # Increment y_offset anyway for total height calculation if needed, but don't break yet
+                 # as total height calculation is now separate.
+                 # For clickable items, we only care about those rendered.
+                 pass # It will be skipped by the blit check anyway
             
+            if y_offset + current_actual_line_height < 5: # Item ends above panel top padding
+                y_offset += current_actual_line_height
+                continue
+
+
             if text_to_render.strip():
                 text_surf = font_to_use.render(text_to_render, True, color_to_use)
-                panel_surf.blit(text_surf, (15, y_offset)) # Indent content slightly
-            y_offset += current_line_height
+                # item_rect_on_panel is relative to the panel_surf's top-left (0,0)
+                item_rect_on_panel = text_surf.get_rect(topleft=(15, y_offset))
+                
+                # Only blit if item is at least partially visible within the clip_rect
+                if item_rect_on_panel.bottom > content_clip_rect_on_panel_surf.top and \
+                   item_rect_on_panel.top < content_clip_rect_on_panel_surf.bottom:
+                    panel_surf.blit(text_surf, item_rect_on_panel.topleft)
+
+                    if item_type_for_clickables and isinstance(line_item, dict) and 'id' in line_item:
+                        # screen_item_rect is relative to the main game screen
+                        screen_item_rect = pygame.Rect(
+                            rect.left + item_rect_on_panel.left, 
+                            rect.top + item_rect_on_panel.top,   
+                            item_rect_on_panel.width,
+                            item_rect_on_panel.height 
+                        )
+                        element_key = f"{item_type_for_clickables}_{line_item['id']}"
+                        self.clickable_elements[element_key] = {
+                            'rect': screen_item_rect, 
+                            'action': 'select_probe', 
+                            'id': line_item['id']
+                        }
+            y_offset += current_actual_line_height
         
         panel_surf.set_clip(None)
         surface.blit(panel_surf, rect)
-        return y_offset + scroll_offset_y # Return total content height for scrollbar calculation
+        
+        # Calculate total content height (unscrolled) for scrollbar logic
+        unscrolled_content_height = 10 # Initial top padding for content lines area
+        if title:
+            unscrolled_content_height += self.title_line_height + 5 # Title text + padding after title
+        
+        for item_data in content_lines:
+            line_h = self.line_height # Default line height
+            if isinstance(item_data, dict):
+                font_choice = item_data.get('font', 'default')
+                if font_choice == 'title': line_h = self.title_line_height
+                elif font_choice == 'small': line_h = self.small_line_height
+            unscrolled_content_height += line_h
+        unscrolled_content_height += 5 # Bottom padding for content lines area
+        
+        return unscrolled_content_height
 
     def draw_circular_meter(self, surface, center, radius, value, max_value, 
                            meter_color, label="", show_text=True, width=3):
@@ -101,8 +149,8 @@ class ModernUI:
         
         progress_ratio = np.clip(value / max_value, 0.0, 1.0)
         
-        if progress_ratio > 0.005: # Only draw if there's some progress
-            num_segments = int(50 * progress_ratio) + 2 # Ensure at least 2 points for a line
+        if progress_ratio > 0.005: 
+            num_segments = int(50 * progress_ratio) + 2 
             
             arc_points = []
             for i in range(num_segments + 1):
@@ -127,9 +175,9 @@ class ModernUI:
     
     def draw_velocity_vector(self, surface, probe_screen_pos, world_velocity, scale=5):
         speed = np.linalg.norm(world_velocity)
-        if speed < 0.01: return # Don't draw for negligible velocity
+        if speed < 0.01: return
             
-        vector_end_screen = probe_screen_pos + world_velocity * scale # Velocity is in world units/step
+        vector_end_screen = probe_screen_pos + world_velocity * scale
         
         pygame.draw.line(surface, self.ui_colors['accent_yellow'], 
                         probe_screen_pos.astype(int), vector_end_screen.astype(int), 2)
@@ -144,28 +192,23 @@ class ModernUI:
         
         speed_text = f"{speed:.1f} u/s"
         text_surf = self.small_font.render(speed_text, True, self.ui_colors['text_primary'])
-        text_pos = vector_end_screen + np.array([8, -8]) # Offset from arrow tip
+        text_pos = vector_end_screen + np.array([8, -8]) 
         surface.blit(text_surf, text_pos.astype(int))
     
     def draw_target_lock_indicator(self, surface, probe_screen_pos, target_screen_pos, world_distance):
         bracket_size = 12
         bracket_color = self.ui_colors['accent_red']
         
-        # Brackets around target
         points_list = [
-            # Top-left
             [(target_screen_pos[0] - bracket_size, target_screen_pos[1] - bracket_size // 2),
              (target_screen_pos[0] - bracket_size, target_screen_pos[1] - bracket_size),
              (target_screen_pos[0] - bracket_size // 2, target_screen_pos[1] - bracket_size)],
-            # Top-right
             [(target_screen_pos[0] + bracket_size // 2, target_screen_pos[1] - bracket_size),
              (target_screen_pos[0] + bracket_size, target_screen_pos[1] - bracket_size),
              (target_screen_pos[0] + bracket_size, target_screen_pos[1] - bracket_size // 2)],
-            # Bottom-left
             [(target_screen_pos[0] - bracket_size // 2, target_screen_pos[1] + bracket_size),
              (target_screen_pos[0] - bracket_size, target_screen_pos[1] + bracket_size),
              (target_screen_pos[0] - bracket_size, target_screen_pos[1] + bracket_size // 2)],
-            # Bottom-right
             [(target_screen_pos[0] + bracket_size, target_screen_pos[1] + bracket_size // 2),
              (target_screen_pos[0] + bracket_size, target_screen_pos[1] + bracket_size),
              (target_screen_pos[0] + bracket_size // 2, target_screen_pos[1] + bracket_size)],
@@ -205,116 +248,67 @@ class ModernUI:
             drawn_distance += segment_len
             is_dash = not is_dash
     
-    def draw_radar_display(self, surface, rect_area, probe_world_pos, all_objects_world, radar_world_range=300):
-        # Radar background (using holographic panel for consistency)
-        self.draw_holographic_panel(surface, rect_area, title="Radar")
-        
-        radar_center_screen = np.array(rect_area.center)
-        radar_radius_screen = min(rect_area.width, rect_area.height) // 2 - 15 # Padding for title/border
-
-        # Range rings (drawn relative to radar_center_screen, clipped by panel)
-        # Create a subsurface for radar content to clip it properly
-        radar_content_rect = pygame.Rect(
-            rect_area.left + 10, rect_area.top + 30, # Below title
-            rect_area.width - 20, rect_area.height - 40 
-        )
-        if radar_content_rect.width <=0 or radar_content_rect.height <=0: return
-        
-        radar_surface = surface.subsurface(radar_content_rect).copy() # Copy to draw on it
-        radar_surface.fill(self.ui_colors['panel_bg']) # Clear subsurface with panel bg
-        
-        # Calculate center relative to this new radar_surface
-        sub_center_x = radar_content_rect.width // 2
-        sub_center_y = radar_content_rect.height // 2
-        sub_radius = min(sub_center_x, sub_center_y)
-
-
-        for i in range(1, 4): # 3 rings
-            ring_rad_screen = sub_radius * (i / 3.0)
-            pygame.draw.circle(radar_surface, self.ui_colors['text_secondary'], 
-                               (sub_center_x, sub_center_y), int(ring_rad_screen), 1)
-        
-        # Center dot for probe's own position
-        pygame.draw.circle(radar_surface, self.ui_colors['accent_yellow'], (sub_center_x, sub_center_y), 2)
-
-        for obj_dict in all_objects_world: # Expects list of dicts with 'position' and 'type'
-            obj_world_pos = np.array(obj_dict.get('position', [0,0]))
-            obj_type = obj_dict.get('type', 'unknown') # e.g. 'resource', 'probe'
-            
-            relative_pos_world = obj_world_pos - probe_world_pos
-            dist_world = np.linalg.norm(relative_pos_world)
-
-            if 0 < dist_world <= radar_world_range:
-                # Scale world relative pos to radar screen relative pos
-                # Angle is preserved, distance is scaled
-                angle_rad = math.atan2(relative_pos_world[1], relative_pos_world[0])
-                dist_on_radar_screen = (dist_world / radar_world_range) * sub_radius
-                
-                radar_blip_x = sub_center_x + dist_on_radar_screen * math.cos(angle_rad)
-                radar_blip_y = sub_center_y + dist_on_radar_screen * math.sin(angle_rad)
-                
-                blip_color = self.ui_colors['text_secondary']
-                blip_size = 1
-                if obj_type == 'resource':
-                    blip_color = self.ui_colors['accent_green']
-                    blip_size = 3
-                elif obj_type == 'probe':
-                    blip_color = self.ui_colors['accent_blue']
-                    blip_size = 2
-                
-                pygame.draw.circle(radar_surface, blip_color, (int(radar_blip_x), int(radar_blip_y)), blip_size)
-        
-        surface.blit(radar_surface, radar_content_rect.topleft)
     def update_data(self, environment_data=None, probe_agents_data=None,
                         selected_probe_id=None, selected_probe_details=None,
                         camera_offset=None, fps=0):
-            """
-            Update the UI with the latest data from the simulation.
-            This method should be called each frame before draw_ui.
-            """
             self.environment_data = environment_data
             self.probe_agents_data = probe_agents_data
             self.selected_probe_id = selected_probe_id
             self.selected_probe_details = selected_probe_details
             self.camera_offset = camera_offset
             self.fps = fps
-            # Potentially update internal states of UI elements here based on new data
 
     def handle_event(self, event):
-        """
-        Process a Pygame event and update UI state or return actions.
-        Returns:
-            dict: A dictionary of actions or state changes.
-                  Example: {'selected_probe_id': new_id, 'event_consumed': True}
-        """
-        # TODO: Implement actual UI event handling logic here.
-        # This could involve checking for clicks on buttons, scrollbar interactions, etc.
-        # For now, it's a stub.
-        
-        # Example: if a click on a probe list item happens:
-        # if event.type == pygame.MOUSEBUTTONDOWN:
-        #     mouse_pos = pygame.mouse.get_pos()
-        #     # ... logic to check if mouse_pos is over a probe list item ...
-        #     if clicked_on_probe_X:
-        #         return {'selected_probe_id': 'probe_X_id', 'event_consumed': True}
+        # Clickable element handling
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1: # Left click
+                mouse_pos = pygame.mouse.get_pos()
+                for element_key, data in self.clickable_elements.items():
+                    if data['rect'].collidepoint(mouse_pos):
+                        if data['action'] == 'select_probe':
+                            return {'selected_probe_id': data['id'], 'event_consumed': True}
+            
+            # Probe list scrolling (mouse wheel)
+            probe_list_panel_rect_for_scroll = pygame.Rect(
+                10, 
+                self.screen_height - self.probe_list_panel_height - 10, 
+                200, 
+                self.probe_list_panel_height
+            )
+            if probe_list_panel_rect_for_scroll.collidepoint(pygame.mouse.get_pos()):
+                scroll_increment = self.probe_list_item_height * 2 # Scroll two items at a time
 
-        return {} # Return an empty dict if no UI action taken
+                if event.button == 4: # Scroll up
+                    self.probe_list_scroll_offset = max(0, self.probe_list_scroll_offset - scroll_increment)
+                    return {'event_consumed': True}
+                elif event.button == 5: # Scroll down
+                    if hasattr(self, 'environment_data') and self.environment_data:
+                        num_probes = len(self.environment_data.probes)
+                        if num_probes > 0:
+                            # Calculate total content height for the probe list items
+                            # This must match the calculation in draw_holographic_panel's return value for the probe list
+                            _title_h = self.title_line_height + 5 if "Probes" else 0 # Title + padding after
+                            _items_total_h = num_probes * self.probe_list_item_height 
+                            # Total height of content within the scrollable area of the panel
+                            total_content_h_for_scroll = 10 + _title_h + _items_total_h + 5 # top_pad + title_section + items + bottom_pad
+                            
+                            # Visible height of the content area within the panel (panel height minus its own chrome/padding)
+                            panel_internal_display_height = self.probe_list_panel_height - (5 + 5) # panel_clip_rect top/bottom padding
+                                                        
+                            max_scroll = max(0, total_content_h_for_scroll - panel_internal_display_height)
+                            self.probe_list_scroll_offset = min(max_scroll, self.probe_list_scroll_offset + scroll_increment)
+                        return {'event_consumed': True}
+        return {}
 
     def draw_ui(self, surface):
-        """
-        Draw all UI elements onto the provided surface.
-        This is the main drawing call for the ModernUI system.
-        """
-        # This is where all the individual draw calls for panels, meters, text, etc.
-        # would be orchestrated based on the current UI state and data.
+        self.clickable_elements.clear() # Clear before drawing new frame's elements
 
-        # --- Example Layout ---
-        # 1. Main Stats Panel (Top-Right or Top-Left)
+        # 1. Main Stats Panel
         stats_panel_rect = pygame.Rect(self.screen_width - 260, 10, 250, 150)
         stats_content = []
         if hasattr(self, 'environment_data') and self.environment_data:
             env = self.environment_data
-            active_probes = sum(1 for p in env.probes.values() if p['energy'] > 0)
+            active_probes = sum(1 for p_data in env.probes.values() if p_data['energy'] > 0)
             stats_content.extend([
                 f"Step: {env.step_count}",
                 f"FPS: {self.fps:.1f}",
@@ -324,59 +318,53 @@ class ModernUI:
             ])
         self.draw_holographic_panel(surface, stats_panel_rect, "System Status", stats_content)
 
-        # 2. Selected Probe Details Panel (Below Stats or separate area)
+        # 2. Selected Probe Details Panel
         if self.selected_probe_id and self.selected_probe_details:
-            probe_panel_rect = pygame.Rect(self.screen_width - 260, 170, 250, 250)
+            probe_panel_rect = pygame.Rect(self.screen_width - 260, 170, 250, 220) # Adjusted height
             probe_details_content = [
                 {'text': f"Probe ID: {self.selected_probe_id}", 'font': 'title'},
-                f"Energy: {self.selected_probe_details['energy']:.1f} / {MAX_ENERGY}", # type: ignore
+                f"Energy: {self.selected_probe_details['energy']:.1f} / {MAX_ENERGY}",
                 f"Position: ({self.selected_probe_details['position'][0]:.1f}, {self.selected_probe_details['position'][1]:.1f})",
                 f"Velocity: ({self.selected_probe_details['velocity'][0]:.1f}, {self.selected_probe_details['velocity'][1]:.1f})",
                 f"Angle: {math.degrees(self.selected_probe_details['angle']):.1f}°",
                 f"Age: {self.selected_probe_details['age']}",
-                # Add more details as needed
+                f"Target: {self.selected_probe_details.get('current_target_id', 'None')}",
+                f"Task: {self.selected_probe_details.get('current_task', 'Idle')}",
             ]
             self.draw_holographic_panel(surface, probe_panel_rect, "Selected Probe", probe_details_content)
 
-            # Draw circular energy meter for selected probe
-            meter_center = (self.screen_width - 260 + 50, 170 + 250 + 40)
+            meter_center = (self.screen_width - 260 + 60, probe_panel_rect.bottom + 40)
             self.draw_circular_meter(surface, meter_center, 30,
-                                     self.selected_probe_details['energy'], MAX_ENERGY, # type: ignore
+                                     self.selected_probe_details['energy'], MAX_ENERGY,
                                      self.ui_colors['accent_green'], "Energy")
-            
-            # Draw velocity vector for selected probe (if it has one)
-            if 'position' in self.selected_probe_details and 'velocity' in self.selected_probe_details:
-                 # Need to convert world pos to screen pos for the probe
-                 # This requires access to the main visualization's world_to_screen or similar logic
-                 # For now, let's assume selected_probe_details might contain a 'screen_pos' if available
-                 # Or, ModernUI needs a way to do this conversion.
-                 # This part is complex as UI doesn't directly know about world_to_screen.
-                 # Visualization should pass screen_pos of selected probe to update_data.
-                 pass # Placeholder for velocity vector drawing
-
-        # 3. Radar Display (Example: Bottom-Left)
-        radar_rect = pygame.Rect(10, self.screen_height - 210, 200, 200)
-        all_objects = []
-        if hasattr(self, 'environment_data') and self.environment_data:
-            probe_world_pos = np.array([0,0]) # Default if no selected probe
-            if self.selected_probe_id and self.selected_probe_details:
-                 probe_world_pos = np.array(self.selected_probe_details['position'])
-            elif len(self.environment_data.probes) > 0: # Fallback to first probe
-                 probe_world_pos = np.array(list(self.environment_data.probes.values())[0]['position'])
-
-
-            for res in self.environment_data.resources:
-                if res.amount > 0:
-                    all_objects.append({'position': res.position, 'type': 'resource'})
-            for p_id, p_data in self.environment_data.probes.items():
-                if p_id != self.selected_probe_id : # Don't show self on radar as a blip
-                     all_objects.append({'position': p_data['position'], 'type': 'probe'})
-            
-            self.draw_radar_display(surface, radar_rect, probe_world_pos, all_objects)
-
-        # 4. Alerts/Notifications Area (e.g., bottom center)
-        # ...
         
-        # 5. Probe List (Scrollable panel)
-        # ... This would require more complex state management for scrolling and item selection
-        # ... and interaction within handle_event.
+        # 3. Probe List Panel (Bottom-Left)
+        probe_list_panel_rect = pygame.Rect(
+            10, 
+            self.screen_height - self.probe_list_panel_height - 10, 
+            200, 
+            self.probe_list_panel_height
+        )
+        probe_list_items_for_panel = []
+        
+        if hasattr(self, 'environment_data') and self.environment_data:
+            sorted_probe_ids = sorted(self.environment_data.probes.keys())
+            for probe_id in sorted_probe_ids:
+                probe_data = self.environment_data.probes[probe_id]
+                text = f"{probe_id} (E: {probe_data['energy']:.0f})"
+                color = self.ui_colors['text_primary'] if probe_id == self.selected_probe_id else self.ui_colors['text_secondary']
+                
+                probe_list_items_for_panel.append({
+                    'text': text, 
+                    'color': color, 
+                    'id': probe_id, 
+                    'font': 'small' 
+                })
+
+        self.draw_holographic_panel(surface, probe_list_panel_rect, "Probes", 
+                                    probe_list_items_for_panel, 
+                                    scroll_offset_y=self.probe_list_scroll_offset,
+                                    item_type_for_clickables='probe_list_item')
+
+        # 4. Alerts/Notifications Area (Placeholder)
+        # ...

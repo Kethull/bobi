@@ -217,7 +217,7 @@ class AdvancedParticleSystem:
                     pos=pos + np.array([random.gauss(0, 1.5), random.gauss(0, 1.5)]),
                     vel=vel,
                     life=random.randint(20, 40),  # Longer life for elegance
-                    size=random.uniform(1.0, 2.2),
+                    size=random.uniform(1.0, 2.2) * ORGANIC_EXHAUST_PARTICLE_SCALE, # Apply scale
                     color=(200, 220, 255),  # Cooler, more elegant flame color
                     particle_type='elegant_exhaust'
                 )

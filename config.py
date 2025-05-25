@@ -130,3 +130,4 @@ ELEGANT_PARTICLE_MODE = True
 METALLIC_SHEEN_INTENSITY = 0.7
 ORGANIC_CURVE_RESOLUTION = 20  # Higher for smoother curves
 ENGINE_GLOW_INTENSITY = 1.2
+ORGANIC_EXHAUST_PARTICLE_SCALE = 0.1 # Scale factor for organic ship exhaust particles (default 1.0)
