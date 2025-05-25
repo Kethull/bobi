@@ -19,9 +19,9 @@ RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource
 
 # Probe Configuration
 MAX_ENERGY = 1000
-INITIAL_ENERGY = 50
-REPLICATION_COST = 40
-REPLICATION_MIN_ENERGY = 60
+INITIAL_ENERGY = 900
+REPLICATION_COST = 800
+REPLICATION_MIN_ENERGY = 999
 PROBE_MASS = 8.0  # Slightly lighter for more responsive feel
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
 THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]
@@ -124,7 +124,8 @@ SHOW_SIMPLE_RESOURCE_INFO = True # If True, shows basic amount text near resourc
 # Organic Ship Visual Theme
 ORGANIC_SHIP_ENABLED = True
 SHIP_SCALE_FACTOR = 1.2  # Slightly larger for elegance
-ELEGANT_PARTICLE_MODE = True
+ELEGANT_PARTICLE_MODE = False
+ENABLE_PARTICLE_EFFECTS = False # Global toggle for all particle effects
 
 # Enhanced visual settings
 METALLIC_SHEEN_INTENSITY = 0.7

@@ -61,7 +61,8 @@ class Visualization:
     
     def render(self, environment, probe_agents: Dict = None):
         """Enhanced rendering with all new systems"""
-        self.particle_system.update() # Update all particles first
+        if ENABLE_PARTICLE_EFFECTS:
+            self.particle_system.update() # Update all particles first
 
         # Clear with space background
         self.screen.fill((5, 5, 15)) # Darker space blue/black
@@ -85,7 +86,8 @@ class Visualization:
         
         self._draw_enhanced_resources(environment.resources) # Placeholder name
         self._draw_enhanced_probes(environment.probes, environment.messages) # Now correctly defined
-        self.particle_system.render(self.screen)
+        if ENABLE_PARTICLE_EFFECTS:
+            self.particle_system.render(self.screen)
         self._draw_enhanced_ui(environment, probe_agents) # Placeholder name
         
         pygame.display.flip()
@@ -178,10 +180,11 @@ class Visualization:
                 )
                 
                 # Organic particle effects
-                self.particle_system.emit_organic_thruster_exhaust(
-                    screen_pos, current_probe_angle_rad,
-                    target_power_idx, thrust_ramp_value
-                )
+                if ENABLE_PARTICLE_EFFECTS:
+                    self.particle_system.emit_organic_thruster_exhaust(
+                        screen_pos, current_probe_angle_rad,
+                        target_power_idx, thrust_ramp_value
+                    )
 
             if probe_data.get('is_mining_visual', False) and probe_data.get('mining_target_pos_visual') is not None and not is_low_power:
                 mining_target_world_pos = probe_data['mining_target_pos_visual']
@@ -196,11 +199,12 @@ class Visualization:
                     self.screen, laser_start_screen_pos, mining_target_screen_pos,
                     intensity=1.0, pulse_phase=pygame.time.get_ticks()
                 )
-                self.particle_system.emit_mining_sparks(
-                    impact_pos=mining_target_screen_pos, intensity=1.0
-                )
+                if ENABLE_PARTICLE_EFFECTS:
+                    self.particle_system.emit_mining_sparks(
+                        impact_pos=mining_target_screen_pos, intensity=1.0
+                    )
             
-            if probe_data['energy'] > MAX_ENERGY * 0.8 and not is_low_power: 
+            if probe_data['energy'] > MAX_ENERGY * 0.8 and not is_low_power:
                 self.visual_effects.draw_energy_field_distortion(
                     self.screen, screen_pos, 
                     intensity_factor = (probe_data['energy'] / MAX_ENERGY if MAX_ENERGY > 0 else 0),
