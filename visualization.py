@@ -87,9 +87,7 @@ class Visualization:
         
         # Update and draw trails
         for probe_id, probe in probes.items():
-            if not probe['alive']:
-                continue
-                
+            # Trails are drawn for all probes, regardless of energy level, as they still exist
             screen_pos = self.world_to_screen(probe['position'])
             
             # Update trail
@@ -115,7 +113,8 @@ class Visualization:
         for message in messages[-10:]:  # Show recent messages
             sender_pos = None
             for probe_id, probe in probes.items():
-                if probe_id == message.sender_id and probe['alive']:
+                # Only probes with energy can be senders of new messages
+                if probe_id == message.sender_id and probe['energy'] > 0:
                     sender_pos = self.world_to_screen(probe['position'])
                     break
             
@@ -126,37 +125,43 @@ class Visualization:
         
         # Draw probes
         for probe_id, probe in probes.items():
-            if not probe['alive']:
-                continue
-                
+            # All probes are drawn, but their appearance changes if in low power mode
             screen_pos = self.world_to_screen(probe['position'])
-            generation = min(probe['generation'], len(generation_colors) - 1)
-            color = generation_colors[generation]
+            is_low_power = probe['energy'] <= 0
             
-            # Probe size based on energy
-            size = max(3, int(probe['energy'] / MAX_ENERGY * 8) + 3)
+            if is_low_power:
+                color = (80, 80, 80) # Dim grey for low power probes
+            else:
+                generation = min(probe['generation'], len(generation_colors) - 1)
+                color = generation_colors[generation]
+            
+            # Probe size based on energy (energy can be 0)
+            size = max(3, int(max(0, probe['energy']) / MAX_ENERGY * 8) + 3)
             pygame.draw.circle(self.screen, color, screen_pos, size)
-            pygame.draw.circle(self.screen, (255, 255, 255), screen_pos, size, 1)
+            pygame.draw.circle(self.screen, (255, 255, 255), screen_pos, size, 1) # Outline
             
             # Draw probe ID
-            text = self.small_font.render(str(probe_id), True, (255, 255, 255))
+            id_text_color = (150, 150, 150) if is_low_power else (255, 255, 255)
+            id_text_content = str(probe_id) + (" (LP)" if is_low_power else "")
+            text = self.small_font.render(id_text_content, True, id_text_color)
             self.screen.blit(text, (screen_pos[0] + size + 2, screen_pos[1] - 8))
             
-            # Draw energy bar
-            bar_width = 20
-            bar_height = 4
-            bar_x = screen_pos[0] - bar_width // 2
-            bar_y = screen_pos[1] - size - 8
-            
-            # Background
-            pygame.draw.rect(self.screen, (100, 100, 100),
-                           (bar_x, bar_y, bar_width, bar_height))
-            
-            # Energy level
-            energy_width = int((probe['energy'] / MAX_ENERGY) * bar_width)
-            energy_color = (255, 255, 0) if probe['energy'] > 30 else (255, 100, 100)
-            pygame.draw.rect(self.screen, energy_color,
-                           (bar_x, bar_y, energy_width, bar_height))
+            # Draw energy bar (only if not in low power, or always draw background)
+            if not is_low_power: # Or always draw and it will just be empty
+                bar_width = 20
+                bar_height = 4
+                bar_x = screen_pos[0] - bar_width // 2
+                bar_y = screen_pos[1] - size - 8
+                
+                # Background
+                pygame.draw.rect(self.screen, (100, 100, 100),
+                               (bar_x, bar_y, bar_width, bar_height))
+                
+                # Energy level (ensure energy_width is not negative)
+                energy_width = int((max(0, probe['energy']) / MAX_ENERGY) * bar_width)
+                energy_color = (255, 255, 0) if probe['energy'] > 30 else (255, 100, 100)
+                pygame.draw.rect(self.screen, energy_color,
+                               (bar_x, bar_y, energy_width, bar_height))
     
     def _draw_ui(self, environment, probe_agents):
         """Draw UI information panel"""
@@ -168,22 +173,23 @@ class Visualization:
                         (ui_x - 5, ui_y - 5, 185, SCREEN_HEIGHT - 10))
         
         # Statistics
-        alive_probes = sum(1 for probe in environment.probes.values() if probe['alive'])
-        total_energy = sum(probe['energy'] for probe in environment.probes.values() if probe['alive'])
-        avg_energy = total_energy / max(alive_probes, 1)
+        # "Alive" now means energy > 0 for UI purposes
+        active_probes_count = sum(1 for probe in environment.probes.values() if probe['energy'] > 0)
+        total_energy_active = sum(probe['energy'] for probe in environment.probes.values() if probe['energy'] > 0)
+        avg_energy_active = total_energy_active / max(active_probes_count, 1)
         
-        # Generation statistics
+        # Generation statistics for active probes
         generations = {}
         for probe in environment.probes.values():
-            if probe['alive']:
+            if probe['energy'] > 0: # Count only active probes for generation stats
                 gen = probe['generation']
                 generations[gen] = generations.get(gen, 0) + 1
         
         stats = [
             f"Step: {environment.step_count}",
-            f"Alive Probes: {alive_probes}",
+            f"Active Probes: {active_probes_count}", # Changed "Alive" to "Active"
             f"Total Probes: {len(environment.probes)}",
-            f"Avg Energy: {avg_energy:.1f}",
+            f"Avg Energy (Active): {avg_energy_active:.1f}", # Clarified Avg Energy
             f"Resources: {len([r for r in environment.resources if r.amount > 0])}",
             f"Messages: {len(environment.messages)}",
             "",
@@ -197,8 +203,9 @@ class Visualization:
         stats.append("")
         stats.append("Active Probes:")
         for probe_id, probe in environment.probes.items():
-            if probe['alive']:
-                stats.append(f"  #{probe_id}: E{probe['energy']:.0f} G{probe['generation']}")
+            # Display all probes, indicate low power status
+            status_char = "LP" if probe['energy'] <= 0 else "OK"
+            stats.append(f"  #{probe_id}: E{max(0,probe['energy']):.0f} G{probe['generation']} ({status_char})")
         
         # Render text
         y_offset = ui_y

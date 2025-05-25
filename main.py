@@ -44,9 +44,10 @@ class BobiverseSimulation:
             actions = {}
             current_observations = {} # Store current observations for all live probes
 
-            # First, get observations for all live probes
+            # First, get observations for all probes that are still in the environment
+            # (The 'alive' flag is no longer used to determine if a probe is active for observation/action)
             for probe_id in list(self.probe_agents.keys()): # Iterate over a copy of keys
-                if probe_id in self.environment.probes and self.environment.probes[probe_id]['alive']:
+                if probe_id in self.environment.probes: # Check if probe exists in environment
                     # Ensure observation is available from the environment's reset or step
                     if probe_id in observations:
                          current_observations[probe_id] = observations[probe_id]
@@ -75,13 +76,15 @@ class BobiverseSimulation:
                 else: # For newly created probes
                     episode_rewards[probe_id] = reward
 
-            # Remove agents for probes that are no longer alive
-            for probe_id in list(self.probe_agents.keys()):
-                if probe_id not in self.environment.probes or not self.environment.probes[probe_id]['alive']:
-                    if probe_id in dones and dones[probe_id]: # Check if probe is done
-                         del self.probe_agents[probe_id]
-                         if probe_id in episode_rewards: # Clean up rewards dict
-                             del episode_rewards[probe_id]
+            # Agents are no longer removed during an episode as probes don't "die"
+            # They persist until the episode ends.
+            # The 'dones' flag from environment.step() will signal episode end for all.
+            # for probe_id in list(self.probe_agents.keys()):
+            #     if probe_id not in self.environment.probes or not self.environment.probes[probe_id]['alive']:
+            #         if probe_id in dones and dones[probe_id]:
+            #              del self.probe_agents[probe_id]
+            #              if probe_id in episode_rewards:
+            #                  del episode_rewards[probe_id]
 
 
             # Render if requested
@@ -93,9 +96,11 @@ class BobiverseSimulation:
         
         # Training step for surviving agents
         if train:
-            for agent_id in list(self.probe_agents.keys()): # Iterate over a copy of keys
-                if agent_id in self.probe_agents: # Check if agent still exists
-                    self.probe_agents[agent_id].learn(total_timesteps=1000) # Reduced for faster episodes
+            # All agents that existed throughout the episode (or were created) get a chance to learn
+            # Probes in low power mode will have received different rewards, influencing their learning
+            for agent_id, agent in self.probe_agents.items():
+                # No need to check if agent_id in self.probe_agents again, as we iterate over items
+                agent.learn(total_timesteps=1000) # Reduced for faster episodes
         
         self.episode_count +=1
         print(f"Episode {self.episode_count} finished after {step_count} steps.")
@@ -106,7 +111,10 @@ class BobiverseSimulation:
     def _handle_new_probes(self):
         """Create agents for newly replicated probes"""
         for probe_id, probe_data in self.environment.probes.items():
-            if probe_id not in self.probe_agents and probe_data['alive']:
+            # Create agent if it's a new probe_id and doesn't have an agent yet.
+            # The 'alive' flag is not the primary concern for agent creation anymore,
+            # as probes are always "alive" in the environment dictionary.
+            if probe_id not in self.probe_agents:
                 parent_agent = None
                 # Attempt to find a parent agent to inherit from
                 # This logic might need refinement based on how parentage is tracked/desired
@@ -134,7 +142,7 @@ if __name__ == "__main__":
     for i in range(num_episodes):
         print(f"\n--- Starting Episode {i+1}/{num_episodes} ---")
         # Set train=True if you want agents to learn
-        rewards, steps = simulation.run_episode(max_steps=2000, render=True, train=simulation.training_mode) 
+        rewards, steps = simulation.run_episode(max_steps=EPISODE_LENGTH, render=True, train=simulation.training_mode) 
         
         if not simulation.running:
             print("Simulation terminated by user.")

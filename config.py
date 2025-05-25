@@ -24,14 +24,15 @@ PROBE_MASS = 2.0  # Modified - Mass of the probe
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
 THRUST_FORCE = [0.0, 1.0, 2.0]  # Renamed and values updated
 THRUST_ENERGY_COST_FACTOR = 0.05 # New - Cost per unit of force per step
-ENERGY_DECAY_RATE = 0.01
+ENERGY_DECAY_RATE = 0.00
+LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
 
 # Communication
 COMM_RANGE = 100
 MESSAGE_TYPES = ['RESOURCE_LOCATION']
 
 # Training Configuration
-EPISODE_LENGTH = 5000
+EPISODE_LENGTH = 50000
 LEARNING_RATE = 3e-4
 BATCH_SIZE = 64
 

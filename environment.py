@@ -165,38 +165,49 @@ class SpaceEnvironment(gym.Env):
         """Process a single probe's action and return reward"""
         probe = self.probes[probe_id]
         reward = 0.0
-        
-        # Parse action
-        thrust_dir, thrust_power, communicate, replicate = action
+        is_low_power = probe['energy'] <= 0
+
+        if is_low_power:
+            reward -= LOW_POWER_PENALTY # Apply penalty for being in low power mode
+            # Probe cannot perform actions that cost energy if in low power mode
+            thrust_dir = 0
+            communicate = 0
+            replicate = 0
+            # Note: Resource collection can still happen passively below
+
+        # Parse action (actions might have been overridden if low_power)
+        thrust_dir_actual, thrust_power_actual, communicate_actual, replicate_actual = action
+        if is_low_power:
+            thrust_dir_actual = 0
+            communicate_actual = 0
+            replicate_actual = 0
         
         # Apply thrust (Newtonian physics)
-        if thrust_dir > 0:  # 0 is no thrust
+        if thrust_dir_actual > 0:  # 0 is no thrust
             directions = [
                 (0, 1), (1, 1), (1, 0), (1, -1),
                 (0, -1), (-1, -1), (-1, 0), (-1, 1)
             ]
-            direction_vector = np.array(directions[thrust_dir - 1], dtype=np.float32)
-            force_magnitude = THRUST_FORCE[thrust_power] # Use THRUST_FORCE from config
+            direction_vector = np.array(directions[thrust_dir_actual - 1], dtype=np.float32)
+            force_magnitude = THRUST_FORCE[thrust_power_actual] # Use THRUST_FORCE from config
             
-            if force_magnitude > 0:
+            if force_magnitude > 0: # Should only happen if not is_low_power
                 force_vector = direction_vector * force_magnitude
                 
-                # F = ma => a = F/m
                 acceleration_vector = force_vector / probe['mass']
                 probe['velocity'] += acceleration_vector
                 
-                # Energy cost for applying force
-                energy_cost = force_magnitude * THRUST_ENERGY_COST_FACTOR # New energy cost model
-                probe['energy'] -= energy_cost
-                reward -= energy_cost * 0.01 # Small penalty for energy use, scaled by new cost factor
+                energy_cost = force_magnitude * THRUST_ENERGY_COST_FACTOR
+                probe['energy'] = max(0, probe['energy'] - energy_cost) # Ensure energy doesn't go below 0
+                reward -= energy_cost * 0.01
         
         # Communication
-        if communicate > 0:
+        if communicate_actual > 0: # Should only happen if not is_low_power
             reward += self._handle_communication(probe_id)
         
         # Replication
-        if replicate > 0 and probe['energy'] > REPLICATION_MIN_ENERGY:
-            reward += self._handle_replication(probe_id)
+        if replicate_actual > 0 and probe['energy'] > REPLICATION_MIN_ENERGY: # Check energy > REPLICATION_MIN_ENERGY
+            reward += self._handle_replication(probe_id) # Energy cost handled within
         
         # Survival reward
         reward += 0.1
@@ -212,13 +223,11 @@ class SpaceEnvironment(gym.Env):
         
         # Update probe state
         probe['age'] += 1
-        probe['energy'] -= ENERGY_DECAY_RATE
+        probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE) # Ensure energy doesn't go below 0 from decay
         probe['total_reward'] += reward
         
-        # Check if probe dies
-        if probe['energy'] <= 0:
-            probe['alive'] = False
-            reward -= 10  # Death penalty
+        # Probe no longer "dies" by having alive set to False or a large death penalty.
+        # The penalty is now continuous if is_low_power.
         
         return reward
     
@@ -256,7 +265,8 @@ class SpaceEnvironment(gym.Env):
             return 0.0
         
         probe = self.probes[probe_id]
-        probe['energy'] -= REPLICATION_COST
+        # Ensure replication cost doesn't take energy below 0, though REPLICATION_MIN_ENERGY check should prevent issues
+        probe['energy'] = max(0, probe['energy'] - REPLICATION_COST)
         
         # Create new probe
         new_id = self.max_probe_id + 1
