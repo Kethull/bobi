@@ -19,10 +19,10 @@ RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource (ke
 RESOURCE_DISCOVERY_REWARD_FACTOR = 0.05 # Reward per unit of discovered resource amount
 
 # Probe Configuration
-MAX_ENERGY = 1000
-INITIAL_ENERGY = 900
-REPLICATION_COST = 800
-REPLICATION_MIN_ENERGY = 999
+MAX_ENERGY = 100000
+INITIAL_ENERGY = 90000
+REPLICATION_COST = 80000
+REPLICATION_MIN_ENERGY = 99900
 PROBE_MASS = 8.0  # Slightly lighter for more responsive feel
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
 THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]

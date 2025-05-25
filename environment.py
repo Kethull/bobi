@@ -735,12 +735,11 @@ class SpaceEnvironment(gym.Env):
         
         return np.sqrt(dx*dx + dy*dy)
     
-    def _wrap_position(self, pos):
-        """Wrap position within world boundaries"""
-        return np.array([
-            pos[0] % self.world_width,
-            pos[1] % self.world_height
-        ])
+    def _wrap_position(self, position: np.ndarray) -> np.ndarray:
+        """Clamps the position to the world boundaries."""
+        position[0] = np.clip(position[0], 0, self.world_width)
+        position[1] = np.clip(position[1], 0, self.world_height)
+        return position
     
     def reset(self):
         """Reset the environment"""
