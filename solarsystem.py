@@ -91,34 +91,67 @@ class OrbitalMechanics:
             # Update position (p_new = p_old + v_new*dt)
             body.position += body.velocity * dt_seconds
 
-    def calculate_initial_state_vector(self, semi_major_axis_au: float, sun_mass_kg: float) -> Tuple[np.ndarray, np.ndarray]:
+    def calculate_initial_state_vector(self, semi_major_axis_au: float, eccentricity: float, true_anomaly_rad: float, central_body_mass_kg: float) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calculates the initial 2D position (AU) and velocity (AU/second) vectors for a planet
-        assuming a circular orbit, starting on the positive x-axis relative to the Sun.
-        Velocity will be in the positive y-direction.
+        Calculates the initial 2D position (AU) and velocity (AU/second) vectors for an orbiting body.
+        Position and velocity are relative to the central body.
+        Assumes true_anomaly_rad is the angle from the x-axis in the orbital plane.
         """
         AU_METERS = 1.496e11 # Astronomical unit in meters
 
         if semi_major_axis_au <= 0:
-            # Return a zero vector or raise error if orbit radius is invalid
             return np.array([0.0, 0.0], dtype=np.float64), np.array([0.0, 0.0], dtype=np.float64)
+        if eccentricity < 0 or eccentricity >= 1: # Basic check for elliptical orbits
+            # For simplicity, fallback to circular if eccentricity is problematic, or raise error
+            # For now, let's assume valid eccentricities are passed.
+            # If e=0, formulas should simplify to circular.
+            pass
 
-        r_meters = semi_major_axis_au * AU_METERS
-
-        # Orbital speed for a circular orbit: v = sqrt(G * M_sun / r)
-        # self.G_SI is 6.67430e-11 m^3 kg^-1 s^-2
-        if r_meters == 0: # Should be caught by semi_major_axis_au <= 0
-             orbital_speed_m_s = 0.0
+        a_meters = semi_major_axis_au * AU_METERS
+        
+        # Distance from central body (r)
+        if np.isclose(eccentricity, 0.0): # Handle purely circular case to avoid 1-e^2 = 1 in denominator if e is tiny but not zero
+            r_meters = a_meters
         else:
-            orbital_speed_m_s = np.sqrt(self.G_SI * sun_mass_kg / r_meters)
+            r_meters = a_meters * (1 - eccentricity**2) / (1 + eccentricity * np.cos(true_anomaly_rad))
 
-        # Initial position: [x_au, y_au]
-        # Placing planet on the positive x-axis relative to the Sun
-        initial_pos_au = np.array([semi_major_axis_au, 0.0], dtype=np.float64)
+        if r_meters <= 0: # Should not happen with valid a_meters and e < 1
+             return np.array([0.0, 0.0], dtype=np.float64), np.array([0.0, 0.0], dtype=np.float64)
 
-        # Initial velocity: [vx_au_s, vy_au_s]
-        # Velocity is tangential, so if pos is (r, 0), vel is (0, v_speed) for counter-clockwise orbit
-        initial_vel_m_s = np.array([0.0, orbital_speed_m_s], dtype=np.float64)
+        # Position vector components (AU)
+        pos_x_au = (r_meters / AU_METERS) * np.cos(true_anomaly_rad)
+        pos_y_au = (r_meters / AU_METERS) * np.sin(true_anomaly_rad)
+        initial_pos_au = np.array([pos_x_au, pos_y_au], dtype=np.float64)
+
+        # Velocity components (m/s)
+        # Semi-latus rectum (p) in meters
+        p_meters = a_meters * (1 - eccentricity**2)
+        if p_meters <= 0 and not np.isclose(eccentricity, 1.0): # p_meters can be 0 if e=1 (parabolic)
+             # This indicates an issue, likely with a_meters or e
+             return initial_pos_au, np.array([0.0, 0.0], dtype=np.float64) # Return current pos with zero vel
+
+        # Standard gravitational parameter mu = G * M
+        mu_SI = self.G_SI * central_body_mass_kg
+
+        if np.isclose(p_meters, 0.0) and np.isclose(eccentricity, 0.0): # Circular orbit, r_meters = a_meters = p_meters
+            # Simplified circular velocity
+            v_circular_m_s = np.sqrt(mu_SI / r_meters)
+            vel_x_m_s = -v_circular_m_s * np.sin(true_anomaly_rad) # Tangential
+            vel_y_m_s = v_circular_m_s * np.cos(true_anomaly_rad)  # Tangential
+        elif np.isclose(p_meters, 0.0) and eccentricity >= 1.0: # Parabolic/Hyperbolic edge case, not handled here
+            vel_x_m_s = 0.0
+            vel_y_m_s = 0.0
+        else:
+            # Radial velocity (m/s)
+            v_r_m_s = np.sqrt(mu_SI / p_meters) * eccentricity * np.sin(true_anomaly_rad)
+            # Tangential velocity (m/s)
+            v_t_m_s = np.sqrt(mu_SI / p_meters) * (1 + eccentricity * np.cos(true_anomaly_rad))
+
+            # Convert radial and tangential velocities to Cartesian components (m/s)
+            vel_x_m_s = v_r_m_s * np.cos(true_anomaly_rad) - v_t_m_s * np.sin(true_anomaly_rad)
+            vel_y_m_s = v_r_m_s * np.sin(true_anomaly_rad) + v_t_m_s * np.cos(true_anomaly_rad)
+        
+        initial_vel_m_s = np.array([vel_x_m_s, vel_y_m_s], dtype=np.float64)
         
         # Convert velocity from m/s to AU/s
         initial_vel_au_s = initial_vel_m_s / AU_METERS

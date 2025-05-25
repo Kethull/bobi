@@ -841,8 +841,11 @@ class SolarSystemEnvironment(SpaceEnvironment): # Or gym.Env if SpaceEnvironment
             else:
                 # Use OrbitalMechanics to calculate initial state vectors
                 # calculate_initial_state_vector returns pos in AU and vel in AU/second
+                true_anomaly_rad = 0.0 # Start at perihelion for simplicity, or randomize
                 pos_au, vel_au_s = self.orbital_mechanics.calculate_initial_state_vector(
                     data['semi_major_axis_au'],
+                    data['eccentricity'],
+                    true_anomaly_rad,
                     SUN_MASS_KG # SUN_MASS_KG is defined in config.py
                 )
 
