@@ -297,14 +297,16 @@ class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially
                 'name': self.sun.name,
                 'position': self.sun.position_sim.tolist(), # Use position_sim
                 'radius_sim': self.sun.display_radius_sim, # Use display_radius_sim
-                'color': self.sun.color
+                'color': self.sun.color,
+                'orbit_path': [p.tolist() for p in self.sun.orbit_path] # Add orbit path
             })
         for planet_body in self.planets: # Renamed to avoid conflict
             render_data.append({
                 'name': planet_body.name,
                 'position': planet_body.position_sim.tolist(), # Use position_sim
                 'radius_sim': planet_body.display_radius_sim, # Use display_radius_sim
-                'color': planet_body.color
+                'color': planet_body.color,
+                'orbit_path': [p.tolist() for p in planet_body.orbit_path] # Add orbit path
             })
         
         # if self.asteroid_belt: # AsteroidBelt commented out

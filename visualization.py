@@ -111,10 +111,28 @@ class Visualization:
     
     # Definition of _draw_celestial_bodies should be at class level, not interrupting render method
     def _draw_celestial_bodies(self, environment):
-        """Draws the Sun and planets."""
+        """Draws the Sun and planets, and their orbital lines."""
         if hasattr(environment, 'get_celestial_bodies_data_for_render'):
             celestial_data = environment.get_celestial_bodies_data_for_render()
             for body_data in celestial_data:
+                # Draw orbital path first (so body is drawn on top)
+                if 'orbit_path' in body_data and body_data['orbit_path']:
+                    # Convert all world points to screen points
+                    screen_orbit_points = [self.world_to_screen(point) for point in body_data['orbit_path']]
+                    
+                    if len(screen_orbit_points) > 1:
+                        # Use a slightly dimmer color for the orbit, perhaps based on the body's color or a fixed one
+                        orbit_color = body_data.get('orbit_color', (100, 100, 100)) # Default to gray
+                        # Adjust alpha for orbit lines if desired, e.g., (r, g, b, alpha)
+                        # pygame.draw.lines(self.screen, orbit_color, False, screen_orbit_points, 1) # False for non-closed loop
+                        
+                        # For smoother lines, especially with zoom, consider drawing anti-aliased lines
+                        # However, pygame.draw.lines does not support anti-aliasing directly.
+                        # For thicker or anti-aliased lines, pygame.draw.aalines or custom drawing might be needed.
+                        # For simplicity, using standard lines for now.
+                        pygame.draw.lines(self.screen, orbit_color, False, screen_orbit_points, 1)
+
+
                 # No filter, draw all bodies provided (Sun, Mercury, Venus, Earth, Mars, Moon)
                 # The data should come from CelestialBody.position_sim and CelestialBody.display_radius_sim
 

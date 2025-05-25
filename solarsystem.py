@@ -32,12 +32,24 @@ class CelestialBody:
 
     # For Moon, this would be its primary (e.g., Earth)
     orbits_around: str = None # Name of the body it orbits, None for Sun or bodies orbiting Sun
+    
+    # Store recent path for drawing orbital lines
+    orbit_path: List[np.ndarray] = field(default_factory=list)
+    orbit_path_max_length: int = 200 # Max points to store for the trail
 
     def __post_init__(self):
         if not isinstance(self.position_sim, np.ndarray):
             self.position_sim = np.array(self.position_sim, dtype=np.float64)
         if not isinstance(self.velocity_sim_s, np.ndarray):
             self.velocity_sim_s = np.array(self.velocity_sim_s, dtype=np.float64)
+        if not isinstance(self.orbit_path, list): # Ensure orbit_path is initialized if not by default_factory
+            self.orbit_path = []
+            
+    def add_to_orbit_path(self, position: np.ndarray):
+        """Adds a position to the orbit path and maintains its max length."""
+        self.orbit_path.append(position.copy()) # Store a copy
+        if len(self.orbit_path) > self.orbit_path_max_length:
+            self.orbit_path.pop(0)
 
 class OrbitalMechanics:
     def __init__(self):
@@ -251,6 +263,7 @@ class OrbitalMechanics:
             # Position is relative to Sun if calculated initially that way, then made absolute.
             # Here, position_sim is already in world coordinates.
             body.position_sim += body.velocity_sim_s * dt_seconds
+            body.add_to_orbit_path(body.position_sim) # Add current position to path
 
             if DEBUG_ORBITAL_MECHANICS and body.name in ["Mercury", "Earth", "Mars"]:
                  print(f"DEBUG: {body.name} Pos={body.position_sim/AU_SCALE} AU, Vel={body.velocity_sim_s/AU_SCALE} AU/s, Accel_sim={accel_sim_s2}")
@@ -287,6 +300,7 @@ class OrbitalMechanics:
             # However, CelestialBody.position_sim is intended to be world coordinates after initialization.
             # So, the update is direct.
             moon.position_sim += moon.velocity_sim_s * dt_seconds
+            moon.add_to_orbit_path(moon.position_sim) # Add current position to path
             
             if DEBUG_ORBITAL_MECHANICS:
                 print(f"DEBUG: Moon Pos={moon.position_sim/AU_SCALE} AU, Vel={moon.velocity_sim_s/AU_SCALE} AU/s (rel to Sun)")
