@@ -121,3 +121,12 @@ FPS = 60
 SPACESHIP_SIZE = 12 # New - Visual size of the spaceship
 SHOW_SIMPLE_PROBE_INFO = True # If True, shows basic ID/Energy bar above probes (can be disabled if ModernUI handles it)
 SHOW_SIMPLE_RESOURCE_INFO = True # If True, shows basic amount text near resources (can be disabled if ModernUI handles it)
+# Organic Ship Visual Theme
+ORGANIC_SHIP_ENABLED = True
+SHIP_SCALE_FACTOR = 1.2  # Slightly larger for elegance
+ELEGANT_PARTICLE_MODE = True
+
+# Enhanced visual settings
+METALLIC_SHEEN_INTENSITY = 0.7
+ORGANIC_CURVE_RESOLUTION = 20  # Higher for smoother curves
+ENGINE_GLOW_INTENSITY = 1.2

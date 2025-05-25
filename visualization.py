@@ -6,7 +6,7 @@ import math
 from config import *
 from environment import Resource # Added import for Resource
 from environment import Message # Added import for Message
-from probe_renderer import DetailedProbeRenderer
+from organic_ship_renderer import OrganicShipRenderer
 from particle_system import AdvancedParticleSystem
 from visual_effects import VisualEffects, StarField # Added imports
 from advanced_ui import ModernUI # Added import
@@ -19,7 +19,7 @@ class Visualization:
         self.clock = pygame.time.Clock()
         
         # Enhanced rendering systems
-        self.probe_detail_renderer = DetailedProbeRenderer()
+        self.ship_renderer = OrganicShipRenderer()  # Replace DetailedProbeRenderer
         self.particle_system = AdvancedParticleSystem()
         self.visual_effects = VisualEffects()
         self.starfield = StarField(SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -157,23 +157,30 @@ class Visualization:
                 cache['prev_velocity'] = np.array([0,0], dtype=float)
             cache['prev_screen_pos'] = np.array(screen_pos_raw)
             
-            screen_pos = screen_pos_display 
+            screen_pos = screen_pos_display
             is_low_power = probe_data['energy'] <= 0
-            current_probe_angle_rad = probe_data.get('angle', 0.0) 
+            current_probe_angle_rad = probe_data.get('angle', 0.0)
 
-            self.probe_detail_renderer.draw_bobiverse_probe(self.screen, probe_data, screen_pos, scale=1.0)
-
+            # Draw organic ship
+            self.ship_renderer.draw_organic_ship(
+                self.screen, probe_data, screen_pos, scale=1.0
+            )
+            
+            # Enhanced thruster effects
             smoothing_state = probe_data.get('action_smoothing_state', {})
             thrust_ramp_value = smoothing_state.get('current_thrust_ramp', 0.0)
             if probe_data.get('is_thrusting_visual', False) and not is_low_power and thrust_ramp_value > 0.01:
                 target_power_idx = probe_data.get('thrust_power_visual', 0)
-                ramp_ratio = 0.0
-                if target_power_idx > 0: ramp_ratio = thrust_ramp_value / float(target_power_idx)
-                elif thrust_ramp_value > 0.01: ramp_ratio = thrust_ramp_value / (float(len(THRUST_FORCE)-1) if len(THRUST_FORCE) > 1 else 1.0)
-                ramp_ratio = np.clip(ramp_ratio, 0.0, 1.0)
-                self.particle_system.emit_thruster_exhaust(
-                    pos=screen_pos, angle=current_probe_angle_rad, 
-                    thrust_power_level=target_power_idx, thrust_ramp_ratio=ramp_ratio
+                # Use organic thruster rendering
+                self.ship_renderer.draw_enhanced_thruster_effects(
+                    self.screen, screen_pos, current_probe_angle_rad,
+                    target_power_idx, thrust_ramp_value
+                )
+                
+                # Organic particle effects
+                self.particle_system.emit_organic_thruster_exhaust(
+                    screen_pos, current_probe_angle_rad,
+                    target_power_idx, thrust_ramp_value
                 )
 
             if probe_data.get('is_mining_visual', False) and probe_data.get('mining_target_pos_visual') is not None and not is_low_power:

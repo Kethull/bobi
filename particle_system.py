@@ -189,12 +189,48 @@ class AdvancedParticleSystem:
             )
             self.add_particle(particle)
 
+    def emit_organic_thruster_exhaust(self, pos, angle, thrust_power, thrust_ramp=1.0):
+            """Create elegant exhaust particles that match organic ship design"""
+            if thrust_power <= 0:
+                return
+                
+            # More refined particle emission
+            particle_count = int(thrust_power * thrust_ramp * 8)  # Fewer, higher quality particles
+            
+            for _ in range(particle_count):
+                # Exhaust flows more smoothly
+                spread_angle = random.gauss(0, 0.15)  # Tighter spread for elegance
+                particle_angle = angle + math.pi + spread_angle
+                
+                # More controlled velocity distribution
+                base_velocity = thrust_power * 2.5 * thrust_ramp
+                velocity_variation = base_velocity * 0.15  # Less chaos
+                velocity_magnitude = base_velocity + random.gauss(0, velocity_variation)
+                
+                vel = np.array([
+                    math.cos(particle_angle) * velocity_magnitude,
+                    math.sin(particle_angle) * velocity_magnitude
+                ])
+                
+                # Elegant particle properties
+                particle = Particle(
+                    pos=pos + np.array([random.gauss(0, 1.5), random.gauss(0, 1.5)]),
+                    vel=vel,
+                    life=random.randint(20, 40),  # Longer life for elegance
+                    size=random.uniform(1.0, 2.2),
+                    color=(200, 220, 255),  # Cooler, more elegant flame color
+                    particle_type='elegant_exhaust'
+                )
+                particle.temperature = random.uniform(1800, 2800)  # Cooler temperatures
+                
+                self.particles.append(particle)
+
     def add_particle(self, particle):
         if len(self.particles) < self.max_particles:
             self.particles.append(particle)
         # Optional: replace oldest if max_particles is reached
         # else:
-        #     self.particles.pop(0) 
+        #     self.particles.pop(0)
         #     self.particles.append(particle)
 
 
@@ -209,21 +245,21 @@ class AdvancedParticleSystem:
             pos_int = p.pos.astype(int)
             size_int = max(1, int(p.size))
 
-            if p.particle_type == 'exhaust' or p.particle_type == 'energy':
+            if p.particle_type == 'exhaust' or p.particle_type == 'energy' or p.particle_type == 'elegant_exhaust': # Added elegant_exhaust
                 # Use a temporary surface for alpha blending and glow
                 temp_surf_size = size_int * 4
                 if temp_surf_size == 0: continue
                 temp_surf = pygame.Surface((temp_surf_size, temp_surf_size), pygame.SRCALPHA)
                 
                 # Draw particle center
-                pygame.draw.circle(temp_surf, (*color, alpha), 
+                pygame.draw.circle(temp_surf, (*color, alpha),
                                  (temp_surf_size // 2, temp_surf_size // 2), size_int)
                 
                 # Simple glow for exhaust/energy
-                if p.particle_type == 'exhaust':
+                if p.particle_type == 'exhaust' or p.particle_type == 'elegant_exhaust': # Added elegant_exhaust
                     glow_alpha = int(alpha * 0.3)
                     if glow_alpha > 10:
-                         pygame.draw.circle(temp_surf, (*color, glow_alpha), 
+                         pygame.draw.circle(temp_surf, (*color, glow_alpha),
                                          (temp_surf_size // 2, temp_surf_size // 2), size_int + 2)
                 
                 surface.blit(temp_surf, (pos_int[0] - temp_surf_size // 2, pos_int[1] - temp_surf_size // 2), special_flags=pygame.BLEND_RGBA_ADD)
