@@ -16,6 +16,8 @@ class Visualization:
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 16)
         self.probe_visual_cache = {}  # Store interpolation data
+        self.selected_probe_id_ui = None # ID of the probe selected in the UI
+        self.ui_probe_id_rects = {} # Stores pygame.Rect for probe IDs in UI for click detection
         
         # Colors
         self.colors = {
@@ -337,56 +339,125 @@ class Visualization:
         """Draw UI information panel"""
         ui_x = SCREEN_WIDTH - 190
         ui_y = 10
+        line_height = 16
+        padding = 5
         
         # Background panel
         pygame.draw.rect(self.screen, self.colors['ui_bg'],
-                        (ui_x - 5, ui_y - 5, 185, SCREEN_HEIGHT - 10))
+                        (ui_x - padding, ui_y - padding, 180 + 2 * padding, SCREEN_HEIGHT - 2 * padding))
         
-        # Statistics
-        # "Alive" now means energy > 0 for UI purposes
+        y_offset = ui_y
+
+        # --- General Statistics ---
         active_probes_count = sum(1 for probe in environment.probes.values() if probe['energy'] > 0)
         total_energy_active = sum(probe['energy'] for probe in environment.probes.values() if probe['energy'] > 0)
         avg_energy_active = total_energy_active / max(active_probes_count, 1)
         
-        # Generation statistics for active probes
         generations = {}
         for probe in environment.probes.values():
-            if probe['energy'] > 0: # Count only active probes for generation stats
+            if probe['energy'] > 0:
                 gen = probe['generation']
                 generations[gen] = generations.get(gen, 0) + 1
         
-        stats = [
+        general_stats_text = [
             f"Step: {environment.step_count}",
-            f"Active Probes: {active_probes_count}", # Changed "Alive" to "Active"
+            f"Active Probes: {active_probes_count}",
             f"Total Probes: {len(environment.probes)}",
-            f"Avg Energy (Active): {avg_energy_active:.1f}", # Clarified Avg Energy
+            f"Avg Energy (Active): {avg_energy_active:.1f}",
             f"Resources: {len([r for r in environment.resources if r.amount > 0])}",
             f"Messages: {len(environment.messages)}",
-            "",
-            "Generations:"
+            "", "Generations:"
         ]
-        
         for gen, count in sorted(generations.items()):
-            stats.append(f"  Gen {gen}: {count}")
-        
-        # Individual probe info
-        stats.append("")
-        stats.append("Active Probes:")
-        for probe_id, probe in environment.probes.items():
-            # Display all probes, indicate low power status
+            general_stats_text.append(f"  Gen {gen}: {count}")
+        general_stats_text.append("") # Spacer
+
+        for stat_text in general_stats_text:
+            text_surface = self.small_font.render(stat_text, True, self.colors['ui_text'])
+            self.screen.blit(text_surface, (ui_x, y_offset))
+            y_offset += line_height
+
+        # --- Probe List ---
+        self.ui_probe_id_rects.clear() # Clear old rects
+        probe_list_header = self.small_font.render("Probes (Click to select):", True, self.colors['ui_text'])
+        self.screen.blit(probe_list_header, (ui_x, y_offset))
+        y_offset += line_height
+
+        sorted_probe_ids = sorted(environment.probes.keys())
+
+        for probe_id in sorted_probe_ids:
+            probe = environment.probes[probe_id]
             status_char = "LP" if probe['energy'] <= 0 else "OK"
-            stats.append(f"  #{probe_id}: E{max(0,probe['energy']):.0f} G{probe['generation']} ({status_char})")
+            probe_info_str = f"  #{probe_id}: E{max(0,probe['energy']):.1f} G{probe['generation']} ({status_char})"
+            
+            text_color = self.colors['ui_text']
+            if self.selected_probe_id_ui == probe_id:
+                text_color = (255, 255, 0) # Highlight selected probe in yellow
+
+            text_surface = self.small_font.render(probe_info_str, True, text_color)
+            text_rect = text_surface.get_rect(topleft=(ui_x, y_offset))
+            self.screen.blit(text_surface, text_rect)
+            self.ui_probe_id_rects[probe_id] = text_rect # Store rect for click detection
+            y_offset += line_height
         
-        # Render text
-        y_offset = ui_y
-        for stat in stats:
-            text = self.small_font.render(stat, True, self.colors['ui_text'])
-            self.screen.blit(text, (ui_x, y_offset))
-            y_offset += 16
+        y_offset += line_height # Spacer
+
+        # --- Selected Probe Details ---
+        if self.selected_probe_id_ui is not None and self.selected_probe_id_ui in environment.probes:
+            selected_probe = environment.probes[self.selected_probe_id_ui]
+            details_header = self.small_font.render(f"Details for Probe #{self.selected_probe_id_ui}:", True, (200,200,255))
+            self.screen.blit(details_header, (ui_x, y_offset))
+            y_offset += line_height
+
+            details = [
+                f"  Energy: {selected_probe['energy']:.2f} / {MAX_ENERGY}",
+                f"  Position: ({selected_probe['position'][0]:.1f}, {selected_probe['position'][1]:.1f})",
+                f"  Velocity: ({selected_probe['velocity'][0]:.2f}, {selected_probe['velocity'][1]:.2f})",
+                f"  Angle: {math.degrees(selected_probe['angle']):.1f}°",
+                f"  Ang. Vel: {math.degrees(selected_probe['angular_velocity']):.2f}°/s",
+                f"  Age: {selected_probe['age']}",
+                f"  Generation: {selected_probe['generation']}",
+                f"  Mass: {selected_probe['mass']}",
+                f"  Target: {selected_probe.get('selected_target_info', 'None')}",
+                f"  Dist to Target: {selected_probe.get('distance_to_target_last_step', 'N/A')}",
+                "  Smoothing State:"
+            ]
+            smoothing_state = selected_probe.get('action_smoothing_state', {})
+            for key, val in smoothing_state.items():
+                details.append(f"    {key}: {val:.2f}" if isinstance(val, float) else f"    {key}: {val}")
+            
+            for detail_text in details:
+                if y_offset + line_height > SCREEN_HEIGHT - padding: # Prevent drawing off-screen
+                    break
+                text_surface = self.small_font.render(detail_text, True, self.colors['ui_text'])
+                self.screen.blit(text_surface, (ui_x, y_offset))
+                y_offset += line_height
     
     def handle_events(self):
         """Handle pygame events"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1: # Left mouse button
+                    # Check if click is on a probe ID in the UI
+                    clicked_on_probe_id = False
+                    for probe_id, rect in self.ui_probe_id_rects.items():
+                        if rect.collidepoint(event.pos):
+                            if self.selected_probe_id_ui == probe_id:
+                                self.selected_probe_id_ui = None # Deselect if clicking the same one
+                            else:
+                                self.selected_probe_id_ui = probe_id
+                            clicked_on_probe_id = True
+                            break
+                    # If clicked in UI panel area but not on a specific ID, deselect
+                    # Assuming UI panel x starts at SCREEN_WIDTH - 190 - 5
+                    ui_panel_x_start = SCREEN_WIDTH - 190 - 5
+                    if not clicked_on_probe_id and event.pos[0] >= ui_panel_x_start:
+                         # Check if it's not a click on the general stats area above probe list
+                         # This is a rough check; a more robust way would be to define a rect for the selectable list
+                         # For now, if it's in the panel and not a probe, deselect.
+                         # self.selected_probe_id_ui = None # Potentially deselect if clicking empty UI space
+                         pass # Let's not deselect on empty space for now, only on re-click or specific deselect button
+
         return True
