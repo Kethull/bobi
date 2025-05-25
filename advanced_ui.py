@@ -314,6 +314,7 @@ class ModernUI:
                 f"FPS: {self.fps:.1f}",
                 f"Active Probes: {active_probes} / {len(env.probes)}",
                 f"Resources: {len([r for r in env.resources if r.amount > 0])}",
+                f"Total Mined: {env.total_resources_mined:.1f}",
                 f"Messages: {len(env.messages)}"
             ])
         self.draw_holographic_panel(surface, stats_panel_rect, "System Status", stats_content)

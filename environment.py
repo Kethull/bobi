@@ -39,6 +39,7 @@ class SpaceEnvironment(gym.Env):
         self.messages = []
         self.step_count = 0
         self.max_probe_id = 0
+        self.total_resources_mined = 0.0
         
         # Initialize resources
         self._generate_resources()
@@ -616,6 +617,7 @@ class SpaceEnvironment(gym.Env):
             dist = self._distance(probe['position'], resource.position)
             if dist < HARVEST_DISTANCE and resource.amount > 0:
                 harvested = resource.harvest(HARVEST_RATE)
+                self.total_resources_mined += harvested
                 probe['energy'] = min(MAX_ENERGY, probe['energy'] + harvested)
                 reward += harvested * 5.0  # Resource collection reward
                 probe['is_mining_visual'] = True

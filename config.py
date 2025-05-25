@@ -18,16 +18,16 @@ DISCOVERY_RANGE = HARVEST_DISTANCE * 2.5 # Range within which a resource is "dis
 RESOURCE_DISCOVERY_REWARD = 1.0 # One-time reward for discovering a resource
 
 # Probe Configuration
-MAX_ENERGY = 100
+MAX_ENERGY = 1000
 INITIAL_ENERGY = 50
 REPLICATION_COST = 40
 REPLICATION_MIN_ENERGY = 60
 PROBE_MASS = 8.0  # Slightly lighter for more responsive feel
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
 THRUST_FORCE = [0.0, 0.08, 0.18, 0.32]  # Reduce from [0.0, 0.15, 0.35, 0.6]
-THRUST_ENERGY_COST_FACTOR = 0.02  # Lower cost for more action
-ENERGY_DECAY_RATE = 0.008  # Slightly lower decay
-LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
+THRUST_ENERGY_COST_FACTOR = 0.001  # Lower cost for more action
+ENERGY_DECAY_RATE = 0.001  # Slightly lower decay
+LOW_POWER_PENALTY = 0.9 # New - Penalty per step for being in low power mode (energy <= 0)
 TARGET_PROXIMITY_REWARD_FACTOR = 1.95 # Base reward factor for getting closer to a selected target
 PROXIMITY_REWARD_FALLOFF = 5.0 # Smaller value = sharper reward increase at very close distances. Added to distance in denominator.
 TARGET_SWITCH_ENERGY_COST = 1.0 # Energy cost for switching to a different resource target
