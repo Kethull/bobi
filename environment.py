@@ -445,6 +445,12 @@ class SpaceEnvironment(gym.Env):
         
         probe['age'] += 1
         probe['energy'] = max(0, probe['energy'] - ENERGY_DECAY_RATE)
+        
+        # --- DEBUG MODE: Energy Reset ---
+        if DEBUG_MODE and probe['energy'] <= 0:
+            probe['energy'] = DEBUG_ENERGY_RESET_VALUE
+            # Optional: Could add a visual cue or print statement here if needed for debugging
+            
         probe['total_reward'] += reward
         
         return reward
