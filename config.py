@@ -28,7 +28,7 @@ THRUST_FORCE = [0.0, 0.15, 0.35, 0.6]  # Much smaller forces, 4 levels
 THRUST_ENERGY_COST_FACTOR = 0.02  # Lower cost for more action
 ENERGY_DECAY_RATE = 0.008  # Slightly lower decay
 LOW_POWER_PENALTY = 0.1 # New - Penalty per step for being in low power mode (energy <= 0)
-TARGET_PROXIMITY_REWARD_FACTOR = 0.05 # Reward factor for getting closer to a selected target
+TARGET_PROXIMITY_REWARD_FACTOR = 0.95 # Reward factor for getting closer to a selected target
 
 # Rotational Physics Configuration
 MOMENT_OF_INERTIA = 1.0  # Affects rotational acceleration (higher = slower)
@@ -44,7 +44,9 @@ ANGULAR_DAMPING_FACTOR = 0.05    # Reduces angular velocity each step (e.g., 0.0
 ACTION_SMOOTHING_FACTOR = 0.7  # Blend current/previous actions for linear thrust
 MIN_THRUST_DURATION = 4        # Minimum frames thrust stays active
 THRUST_RAMP_TIME = 3           # Frames to ramp thrust up/down
-ROTATION_SMOOTHING_FACTOR = 0.8 # Separate smoothing for rotation
+ROTATION_SMOOTHING_FACTOR = 0.8 # Separate smoothing for rotation action choice
+MIN_ROTATION_DURATION = 3      # Minimum frames torque stays active (similar to thrust)
+ROTATION_RAMP_TIME = 2         # Frames to ramp torque up/down
 
 # Communication
 COMM_RANGE = 100

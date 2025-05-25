@@ -88,9 +88,13 @@ class SpaceEnvironment(gym.Env):
                 'previous_rotation_action': 0, # This was in the prompt but might not be directly used if blending raw actions
                 'thrust_timer': 0,
                 'target_thrust_power': 0,
-                'current_thrust_ramp': 0.0,
-                'rotation_blend': 0.0,       # Smoothed rotation command (0-4 for rotational_torque_action)
-                'linear_blend': 0.0          # Smoothed linear command (0-3 for linear_thrust_action)
+                'current_thrust_ramp': 0.0,  # Current ramped power for linear thrust (0 to target_thrust_power)
+                'linear_blend': 0.0,         # Smoothed linear command (0-3 for linear_thrust_action)
+                
+                'rotation_blend': 0.0,       # Smoothed rotation command choice (0-4 for rotational_torque_action)
+                'rotation_timer': 0,         # Timer for minimum rotation duration
+                'target_rotation_action': 0, # The target rotational action (0-4) being ramped/maintained
+                'current_rotation_ramp': 0.0 # Current ramped "intensity" of rotation (0 to target_rotation_action's implied level)
             }
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
@@ -269,140 +273,117 @@ class SpaceEnvironment(gym.Env):
         )
         effective_linear_action = int(round(smoothing_state['linear_blend']))
 
-        # THRUST DURATION SYSTEM
-        if effective_linear_action > 0 and not is_low_power: # Only start/continue thrust if not low power and action > 0
+        # --- LINEAR THRUST DURATION & RAMPING ---
+        # Manage thrust timer and target power
+        if effective_linear_action > 0 and not is_low_power:
             if smoothing_state['thrust_timer'] <= 0:  # Start new thrust
-                smoothing_state['target_thrust_power'] = effective_linear_action # This will be 1, 2, or 3
+                smoothing_state['target_thrust_power'] = effective_linear_action
                 smoothing_state['thrust_timer'] = MIN_THRUST_DURATION
-                # current_thrust_ramp will be calculated based on timer
-            # Continue existing thrust (timer decrements below)
         
         if smoothing_state['thrust_timer'] > 0:
             smoothing_state['thrust_timer'] -= 1
-            if is_low_power: # If somehow thrust_timer was active and probe ran out of power
-                 smoothing_state['thrust_timer'] = 0 # Stop thrust immediately
-                 smoothing_state['current_thrust_ramp'] = 0.0
+            if is_low_power:
+                 smoothing_state['thrust_timer'] = 0 # Stop thrust if low power
+        
+        if smoothing_state['thrust_timer'] <= 0:
+            smoothing_state['target_thrust_power'] = 0
 
-        if smoothing_state['thrust_timer'] <= 0: # If timer expired or was forced to 0
-            smoothing_state['target_thrust_power'] = 0 # Ensure target power is also zeroed out
-            # Ramp down (implicit as current_thrust_ramp will decrease if target_thrust_power is 0, or handled by ramp logic)
-            # For a more explicit ramp down, one might adjust current_thrust_ramp towards 0 over THRUST_RAMP_TIME here.
-            # However, the current ramp logic based on (MIN_THRUST_DURATION - timer) / RAMP_TIME handles ramp-up.
-            # For ramp-down, if target_thrust_power becomes 0, current_thrust_ramp should ideally decrease.
-            # Let's adjust ramp logic slightly: if target_thrust_power is 0, ramp should go to 0.
-            if smoothing_state['target_thrust_power'] == 0:
-                 smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - (1.0/THRUST_RAMP_TIME))
+        # Update current_thrust_ramp
+        if smoothing_state['target_thrust_power'] > 0 and not is_low_power: # Ramp Up
+            # ramp_progress_up is how much of the MIN_THRUST_DURATION has passed relative to RAMP_TIME
+            # This means current_thrust_ramp will reach target_thrust_power when timer is (MIN_THRUST_DURATION - THRUST_RAMP_TIME)
+            ramp_progress_up = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / max(1, THRUST_RAMP_TIME))
+            smoothing_state['current_thrust_ramp'] = smoothing_state['target_thrust_power'] * ramp_progress_up
+        else: # Ramp Down (target_thrust_power is 0 or is_low_power)
+            max_ramp_val = float(len(THRUST_FORCE) - 1) # Max possible value for target_thrust_power (e.g., 3)
+            decrement_amount = max_ramp_val / max(1, THRUST_RAMP_TIME) # Ramp down from max in RAMP_TIME steps
+            smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - decrement_amount)
 
-
-        # GRADUAL THRUST RAMPING
-        if smoothing_state['target_thrust_power'] > 0 and not is_low_power : # Only ramp up if there's a target power and not low energy
-            # Ramp up progress: how much of the MIN_THRUST_DURATION has passed relative to RAMP_TIME
-            # Example: MIN_DUR=4, RAMP_TIME=3.
-            # timer=4 (just started): (4-4)/3 = 0. ramp=0
-            # timer=3: (4-3)/3 = 0.33. ramp=target*0.33
-            # timer=2: (4-2)/3 = 0.66. ramp=target*0.66
-            # timer=1: (4-1)/3 = 1.0. ramp=target*1.0
-            ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / max(1, THRUST_RAMP_TIME))
-            smoothing_state['current_thrust_ramp'] = smoothing_state['target_thrust_power'] * ramp_progress
-        elif is_low_power or smoothing_state['target_thrust_power'] == 0: # Ensure ramp is zero if low power or no target thrust
-             # Gradual ramp down if target_thrust_power just became 0
-            if smoothing_state['current_thrust_ramp'] > 0 and smoothing_state['target_thrust_power'] == 0 :
-                smoothing_state['current_thrust_ramp'] = max(0.0, smoothing_state['current_thrust_ramp'] - (THRUST_FORCE[len(THRUST_FORCE)-1] / max(1,THRUST_RAMP_TIME))) # Ramp down based on max force
-            else:
-                 smoothing_state['current_thrust_ramp'] = 0.0
-
-
-        # Apply smooth thrust
-        if smoothing_state['current_thrust_ramp'] > 0.01 and not is_low_power: # Threshold and low power check
-            # target_thrust_power is 0,1,2,3. THRUST_FORCE has 4 levels.
-            # The actual force applied should be based on the ramp value, not directly target_thrust_power.
-            # The ramp is already scaled by target_thrust_power.
-            # thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * (smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power'] if smoothing_state['target_thrust_power'] > 0 else 0)
-            # Simpler: current_thrust_ramp is already an "effective power level"
-            # We need to map current_thrust_ramp (e.g. 0 to 3) to a force.
-            # Let's assume current_thrust_ramp is the "effective power index" to use with THRUST_FORCE
-            # No, current_thrust_ramp is target_power * ramp_progress. So it's already scaled.
-            # THRUST_FORCE[index] gives a base magnitude. We need to scale this base magnitude by ramp_progress.
-            # target_thrust_power is the *intended* power level (e.g. 1, 2, or 3)
-            # ramp_progress is the 0-1 factor.
+        # Apply actual thrust
+        actual_thrust_magnitude = 0.0
+        if smoothing_state['current_thrust_ramp'] > 0.01 and not is_low_power:
+            # current_thrust_ramp is target_power * ramp_progress_up.
+            # To get actual force, scale the THRUST_FORCE[target_power] by (current_ramp / target_power)
+            # This simplifies to THRUST_FORCE[target_power] * ramp_progress_up
+            # target_thrust_power should be valid index for THRUST_FORCE (0 to len-1)
+            target_power_idx = smoothing_state['target_thrust_power']
+            if 0 <= target_power_idx < len(THRUST_FORCE):
+                 # Calculate ramp_progress based on current_thrust_ramp and target_thrust_power
+                ramp_progress_for_force = 0.0
+                if smoothing_state['target_thrust_power'] > 0: # Avoid division by zero if target is 0
+                    ramp_progress_for_force = smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power']
+                
+                actual_thrust_magnitude = THRUST_FORCE[target_power_idx] * ramp_progress_for_force
             
-            # Corrected thrust magnitude calculation:
-            # Use the target_thrust_power to get the base force, then scale by ramp_progress
-            base_force_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']]
-            actual_thrust_magnitude = base_force_magnitude * (smoothing_state['current_thrust_ramp'] / smoothing_state['target_thrust_power'] if smoothing_state['target_thrust_power'] > 0 else 0)
-            # This simplifies to: actual_thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
-            # The prompt had: thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
-            # This seems correct. current_thrust_ramp = target_power * ramp_progress.
-            # So, if THRUST_FORCE is indexed by target_power, then multiply by ramp_progress.
-            # The prompt's `smoothing_state['current_thrust_ramp'] = target_power * ramp_progress`
-            # and then `thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress`
-            # This means `actual_thrust_magnitude` is `THRUST_FORCE[target_power] * (current_thrust_ramp / target_power)`
-            # This is `THRUST_FORCE[target_power] * ramp_progress`. This is what the prompt had.
-
-            # The prompt's code for applying thrust:
-            # thrust_magnitude = THRUST_FORCE[target_power] * ramp_progress
-            # This is correct. `target_power` is `smoothing_state['target_thrust_power']`.
-            # `ramp_progress` is `min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / THRUST_RAMP_TIME)`
-            
-            # Re-evaluating ramp_progress and thrust_magnitude from prompt:
-            # ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / THRUST_RAMP_TIME)
-            # thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * ramp_progress
-            # This seems the most direct from the prompt.
-
-            # Let's use the prompt's ramp_progress calculation directly.
-            # Ensure THRUST_RAMP_TIME is not zero.
-            ramp_time_divisor = max(1, THRUST_RAMP_TIME)
-            ramp_progress = 0.0
-            if smoothing_state['target_thrust_power'] > 0 : # only calculate ramp progress if trying to thrust
-                ramp_progress = min(1.0, (MIN_THRUST_DURATION - smoothing_state['thrust_timer']) / ramp_time_divisor)
-            
-            thrust_magnitude = THRUST_FORCE[smoothing_state['target_thrust_power']] * ramp_progress
-
-            if thrust_magnitude > 0.01: # Apply if significant
+            if actual_thrust_magnitude > 0.01:
                 direction_vector = np.array([np.cos(probe['angle']), np.sin(probe['angle'])])
-                force_vector = direction_vector * thrust_magnitude
+                force_vector = direction_vector * actual_thrust_magnitude
                 acceleration = force_vector / probe['mass']
                 probe['velocity'] += acceleration
                 
                 probe['is_thrusting_visual'] = True
-                probe['thrust_power_visual'] = smoothing_state['target_thrust_power'] # Visual shows target power
+                # Visual shows the intended power level, ramp affects actual force
+                probe['thrust_power_visual'] = smoothing_state['target_thrust_power']
                 
-                energy_cost = thrust_magnitude * THRUST_ENERGY_COST_FACTOR
+                energy_cost = actual_thrust_magnitude * THRUST_ENERGY_COST_FACTOR
                 probe['energy'] = max(0, probe['energy'] - energy_cost)
                 reward -= energy_cost * 0.01
+        else: # Ensure visual is off if no thrust applied
+            probe['is_thrusting_visual'] = False
+            probe['thrust_power_visual'] = 0
 
 
-        # --- SMOOTH ROTATIONAL CONTROL ---
+        # --- ROTATIONAL TORQUE DURATION & RAMPING ---
         input_rotational_action = 0 if is_low_power else raw_rotational_torque_action
-
         smoothing_state['rotation_blend'] = (
             ROTATION_SMOOTHING_FACTOR * smoothing_state['rotation_blend'] +
             (1 - ROTATION_SMOOTHING_FACTOR) * input_rotational_action
         )
-        effective_rotation_action = int(round(smoothing_state['rotation_blend']))
+        effective_rotation_action = int(round(smoothing_state['rotation_blend'])) # This is 0-4
 
-        torque_applied = 0.0
+        # Manage rotation timer and target action
         if effective_rotation_action > 0 and not is_low_power: # Action 0 is no torque
-            # effective_rotation_action: 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
-            # TORQUE_MAGNITUDES: [0=None, 1=Low, 2=High]
-            if effective_rotation_action == 1: # Left Low
-                torque_applied = -TORQUE_MAGNITUDES[1]
-            elif effective_rotation_action == 2: # Left High
-                torque_applied = -TORQUE_MAGNITUDES[2]
-            elif effective_rotation_action == 3: # Right Low
-                torque_applied = TORQUE_MAGNITUDES[1]
-            elif effective_rotation_action == 4: # Right High
-                torque_applied = TORQUE_MAGNITUDES[2]
+            if smoothing_state['rotation_timer'] <= 0: # Start new rotation
+                smoothing_state['target_rotation_action'] = effective_rotation_action
+                smoothing_state['rotation_timer'] = MIN_ROTATION_DURATION
+        
+        if smoothing_state['rotation_timer'] > 0:
+            smoothing_state['rotation_timer'] -= 1
+            if is_low_power:
+                smoothing_state['rotation_timer'] = 0 # Stop rotation if low power
+        
+        if smoothing_state['rotation_timer'] <= 0:
+            smoothing_state['target_rotation_action'] = 0
 
-            if torque_applied != 0.0:
-                angular_acceleration = torque_applied / MOMENT_OF_INERTIA
+        # Update current_rotation_ramp (0.0 to 1.0)
+        if smoothing_state['target_rotation_action'] > 0 and not is_low_power: # Ramp Up
+            rotation_ramp_progress_up = min(1.0, (MIN_ROTATION_DURATION - smoothing_state['rotation_timer']) / max(1, ROTATION_RAMP_TIME))
+            smoothing_state['current_rotation_ramp'] = rotation_ramp_progress_up
+        else: # Ramp Down
+            decrement_step = 1.0 / max(1, ROTATION_RAMP_TIME) # Ramp from 1.0 to 0.0 in RAMP_TIME steps
+            smoothing_state['current_rotation_ramp'] = max(0.0, smoothing_state['current_rotation_ramp'] - decrement_step)
+
+        # Apply actual torque
+        actual_torque_applied = 0.0
+        if smoothing_state['current_rotation_ramp'] > 0.01 and smoothing_state['target_rotation_action'] > 0 and not is_low_power:
+            base_torque_magnitude = 0.0
+            target_action = smoothing_state['target_rotation_action'] # 1=L_Low, 2=L_High, 3=R_Low, 4=R_High
+            
+            if target_action == 1: base_torque_magnitude = -TORQUE_MAGNITUDES[1]
+            elif target_action == 2: base_torque_magnitude = -TORQUE_MAGNITUDES[2]
+            elif target_action == 3: base_torque_magnitude = TORQUE_MAGNITUDES[1]
+            elif target_action == 4: base_torque_magnitude = TORQUE_MAGNITUDES[2]
+            
+            actual_torque_applied = base_torque_magnitude * smoothing_state['current_rotation_ramp']
+
+            if abs(actual_torque_applied) > 1e-4: # Apply if significant
+                angular_acceleration = actual_torque_applied / MOMENT_OF_INERTIA
                 probe['angular_velocity'] += angular_acceleration
                 
-                energy_cost_rotation = abs(torque_applied) * ROTATIONAL_ENERGY_COST_FACTOR
+                energy_cost_rotation = abs(actual_torque_applied) * ROTATIONAL_ENERGY_COST_FACTOR
                 probe['energy'] = max(0, probe['energy'] - energy_cost_rotation)
                 reward -= energy_cost_rotation * 0.01
-
-
+        
         # --- Target Selection Logic --- (Using raw_target_select_action)
         if not is_low_power:
             if raw_target_select_action == 0:
