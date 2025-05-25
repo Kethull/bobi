@@ -58,8 +58,8 @@ ANGULAR_DAMPING_FACTOR = 0.05    # Reduces angular velocity each step (e.g., 0.0
 
 # Smoothing Parameters
 ACTION_SMOOTHING_FACTOR = 0.85  # Increase from 0.7 for more smoothing
-MIN_THRUST_DURATION = 8        # Increase from 4 for more realistic burns
-THRUST_RAMP_TIME = 6           # Increase from 3
+MIN_THRUST_DURATION = 30        # Increase from 4 for more realistic burns
+THRUST_RAMP_TIME = 60           # Increase from 3
 ROTATION_SMOOTHING_FACTOR = 0.9 # Increase from 0.8
 MIN_ROTATION_DURATION = 6      # Increase from 3
 ROTATION_RAMP_TIME = 4         # Increase from 2
