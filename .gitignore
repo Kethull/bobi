@@ -2,3 +2,7 @@ __pycache__/config.cpython-313.pyc
 __pycache__/environment.cpython-313.pyc
 __pycache__/probe.cpython-313.pyc
 __pycache__/visualization.cpython-313.pyc
+__pycache__/particle_system.cpython-313.pyc
+__pycache__/probe_renderer.cpython-313.pyc
+__pycache__/advanced_ui.cpython-313.pyc
+__pycache__/visual_effects.cpython-313.pyc

@@ -5,10 +5,10 @@ import numpy as np
 WORLD_WIDTH = 2000
 WORLD_HEIGHT = 2000
 MAX_PROBES = 20
-INITIAL_PROBES = 1
+INITIAL_PROBES = 3
 
 # Resource Configuration
-RESOURCE_COUNT = 1
+RESOURCE_COUNT = 30
 RESOURCE_MIN_AMOUNT = 50
 RESOURCE_MAX_AMOUNT = 200
 RESOURCE_REGEN_RATE = 0.00  # units per step
@@ -119,3 +119,5 @@ SCREEN_WIDTH = 1200
 SCREEN_HEIGHT = 800
 FPS = 60
 SPACESHIP_SIZE = 12 # New - Visual size of the spaceship
+SHOW_SIMPLE_PROBE_INFO = True # If True, shows basic ID/Energy bar above probes (can be disabled if ModernUI handles it)
+SHOW_SIMPLE_RESOURCE_INFO = True # If True, shows basic amount text near resources (can be disabled if ModernUI handles it)
