@@ -26,6 +26,7 @@ class ProbeAgent:
             self.generation = parent_model.generation + 1
         else:
             # Create new model
+            log_dir = "./ppo_bobiverse_tensorboard/"
             self.model = PPO(
                 "MlpPolicy",
                 self.vec_env,
@@ -33,13 +34,18 @@ class ProbeAgent:
                 n_steps=2048,
                 batch_size=BATCH_SIZE,
                 ent_coef=0.01,
-                verbose=0,
-                device='cpu'  # Force CPU
+                verbose=1, # Changed to 1 for more console output
+                device='cpu',  # Force CPU
+                tensorboard_log=log_dir
             )
     
     def _inherit_model(self, parent_model):
         """Create a new model inheriting from parent with mutations"""
         # Create new model with same architecture
+        # Ensure inherited models also log if that's desired, or set to None if not.
+        # For now, let's make them log to the same parent directory.
+        # Individual runs will be PPO_1, PPO_2 etc. within this dir.
+        log_dir = "./ppo_bobiverse_tensorboard/"
         new_model = PPO(
             "MlpPolicy",
             self.vec_env,
@@ -48,7 +54,8 @@ class ProbeAgent:
             batch_size=BATCH_SIZE,
             ent_coef=0.01,
             verbose=0,
-            device='cpu'  # Force CPU
+            device='cpu',  # Force CPU
+            tensorboard_log=log_dir # Added for inherited model
         )
         
         # Copy parent weights with small mutations
