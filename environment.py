@@ -75,7 +75,9 @@ class SpaceEnvironment(gym.Env):
             'alive': True,
             'mass': PROBE_MASS,  # Initialize probe mass
             'is_thrusting_visual': False, # For visualization
-            'thrust_power_visual': 0      # For visualization
+            'thrust_power_visual': 0,     # For visualization
+            'is_mining_visual': False,    # For mining laser visualization
+            'mining_target_pos_visual': None # For mining laser visualization
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
     
@@ -169,6 +171,8 @@ class SpaceEnvironment(gym.Env):
         reward = 0.0
         probe['is_thrusting_visual'] = False # Reset visual flag each step
         probe['thrust_power_visual'] = 0     # Reset visual thrust power
+        probe['is_mining_visual'] = False    # Reset mining visual flag
+        probe['mining_target_pos_visual'] = None # Reset mining target
 
         is_low_power = probe['energy'] <= 0
 
@@ -296,6 +300,8 @@ class SpaceEnvironment(gym.Env):
                 harvested = resource.harvest(HARVEST_RATE)
                 probe['energy'] = min(MAX_ENERGY, probe['energy'] + harvested)
                 reward += harvested * 5.0  # Resource collection reward
+                probe['is_mining_visual'] = True
+                probe['mining_target_pos_visual'] = resource.position
         
         return reward
     

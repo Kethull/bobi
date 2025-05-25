@@ -8,19 +8,19 @@ MAX_PROBES = 20
 INITIAL_PROBES = 1
 
 # Resource Configuration
-RESOURCE_COUNT = 10
+RESOURCE_COUNT = 1
 RESOURCE_MIN_AMOUNT = 50
 RESOURCE_MAX_AMOUNT = 200
 RESOURCE_REGEN_RATE = 0.00  # units per step
 HARVEST_RATE = 2.0
-HARVEST_DISTANCE = 20
+HARVEST_DISTANCE = 5
 
 # Probe Configuration
 MAX_ENERGY = 100
 INITIAL_ENERGY = 50
 REPLICATION_COST = 40
 REPLICATION_MIN_ENERGY = 60
-PROBE_MASS = 2.0  # Modified - Mass of the probe
+PROBE_MASS = 10.0  # Modified - Mass of the probe
 MAX_VELOCITY = 10.0  # Modified - Max speed for normalization/safety
 THRUST_FORCE = [0.0, 1.0, 2.0]  # Renamed and values updated
 THRUST_ENERGY_COST_FACTOR = 0.05 # New - Cost per unit of force per step

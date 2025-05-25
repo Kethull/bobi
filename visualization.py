@@ -197,6 +197,22 @@ class Visualization:
                 
                 pygame.draw.polygon(self.screen, flame_color, screen_flame_points)
 
+            # Draw mining laser if active
+            if probe.get('is_mining_visual', False) and probe.get('mining_target_pos_visual') is not None and not is_low_power:
+                mining_target_world_pos = probe['mining_target_pos_visual']
+                mining_target_screen_pos = self.world_to_screen(mining_target_world_pos)
+                
+                # Laser originates from the ship's nose
+                # Ship's nose in local coords: np.array([0, -SPACESHIP_SIZE * 0.8])
+                # This point is already part of 'base_points[0]'
+                # We need its rotated and screen-translated position
+                laser_origin_local = base_points[0] # Nose of the ship
+                rotated_laser_origin = rotation_matrix @ laser_origin_local
+                laser_start_screen_pos = (rotated_laser_origin[0] + screen_pos[0], rotated_laser_origin[1] + screen_pos[1])
+                
+                laser_color = (0, 255, 150) # Bright cyan/green
+                pygame.draw.line(self.screen, laser_color, laser_start_screen_pos, mining_target_screen_pos, 2)
+
             # Draw probe ID (adjust position based on spaceship size)
             id_text_color = (150, 150, 150) if is_low_power else (255, 255, 255)
             id_text_content = str(probe_id) + (" (LP)" if is_low_power else "")
