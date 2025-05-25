@@ -446,7 +446,6 @@ class SpaceEnvironment(gym.Env):
                 reward -= energy_cost_rotation * 0.01
         
         # --- Target Selection Logic --- (Using raw_target_select_action)
-        if not is_low_power:
             can_switch_target = (self.step_count - probe.get('last_target_switch_time', 0)) >= TARGET_SWITCH_COOLDOWN
             
             if raw_target_select_action == 0: # Action to clear target
