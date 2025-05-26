@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
 import math
-from config import *
+from config import config
 
 class DetailedProbeRenderer:
     def __init__(self):
@@ -22,7 +22,7 @@ class DetailedProbeRenderer:
     def draw_bobiverse_probe(self, surface, probe, screen_pos, scale=1.0):
         """Draw detailed Bobiverse probe with all authentic components"""
         angle = probe.get('angle', 0)
-        energy_ratio = probe['energy'] / MAX_ENERGY if MAX_ENERGY > 0 else 0
+        energy_ratio = probe['energy'] / config.Probe.MAX_ENERGY if config.Probe.MAX_ENERGY > 0 else 0
         is_low_power = probe['energy'] <= 0
         
         # Component rendering order (back to front)
@@ -37,7 +37,7 @@ class DetailedProbeRenderer:
     
     def _draw_main_hull(self, surface, pos, angle, energy_ratio, scale):
         """Draw cylindrical main body with panel details"""
-        hull_size = SPACESHIP_SIZE * scale
+        hull_size = config.Visualization.PROBE_SIZE_PX * scale
         
         # Main hull outline (elongated hexagon for cylindrical appearance)
         # This was an 8-sided polygon, let's try to make it look more cylindrical
@@ -124,11 +124,11 @@ class DetailedProbeRenderer:
 
     def _draw_communication_dish(self, surface, pos, angle, scale):
         """Draw large parabolic communication dish - most prominent feature"""
-        dish_base_size = SPACESHIP_SIZE * 1.1 * scale # Slightly smaller than prompt for balance
+        dish_base_size = config.Visualization.PROBE_SIZE_PX * 1.1 * scale # Slightly smaller than prompt for balance
         
         # Dish center position (mounted on top/front of probe)
         # Angle 0 is right, so dish should be pointing "forward" (positive X in local rotated space)
-        dish_offset_local = np.array([SPACESHIP_SIZE * 0.5 * scale, 0]) 
+        dish_offset_local = np.array([config.Visualization.PROBE_SIZE_PX * 0.5 * scale, 0])
         dish_center = pos + self._rotate_point(dish_offset_local, angle)
         
         # Main dish surface (multiple concentric circles for depth)
@@ -165,16 +165,16 @@ class DetailedProbeRenderer:
             dish_connection_world = dish_center + self._rotate_point(dish_connection_local, angle - (math.pi/2)) # Dish points forward
 
             # Connection on hull (approximate attachment points)
-            hull_attach_local = np.array([SPACESHIP_SIZE * 0.1 * scale, 
-                                          (i-1) * SPACESHIP_SIZE * 0.2 * scale]) # Spread along y-axis of hull
+            hull_attach_local = np.array([config.Visualization.PROBE_SIZE_PX * 0.1 * scale,
+                                          (i-1) * config.Visualization.PROBE_SIZE_PX * 0.2 * scale]) # Spread along y-axis of hull
             hull_connection_world = pos + self._rotate_point(hull_attach_local, angle)
             
             pygame.draw.line(surface, self.metallic_colors['hull_accent'], hull_connection_world, dish_connection_world, int(max(1, 2*scale)))
 
     def _draw_solar_panels(self, surface, pos, angle, energy_ratio, scale):
         """Draw extending solar panel arrays"""
-        panel_length = SPACESHIP_SIZE * 1.6 * scale # Slightly shorter
-        panel_width = SPACESHIP_SIZE * 0.5 * scale  # Slightly wider
+        panel_length = config.Visualization.PROBE_SIZE_PX * 1.6 * scale # Slightly shorter
+        panel_width = config.Visualization.PROBE_SIZE_PX * 0.5 * scale  # Slightly wider
         
         if energy_ratio > 0.4: # Brighter if more energy
             panel_color = self.metallic_colors['solar_active']
@@ -189,12 +189,12 @@ class DetailedProbeRenderer:
             # Panels extend perpendicular to the probe's forward direction (along local Y)
             
             # Mount point on hull (offset slightly from center along local X)
-            mount_x_local = -SPACESHIP_SIZE * 0.2 * scale 
+            mount_x_local = -config.Visualization.PROBE_SIZE_PX * 0.2 * scale
             
             # Panel corners relative to a central line extending sideways from mount_x_local
             # Start of panel (closer to hull)
-            start_y_local = side * (SPACESHIP_SIZE * 0.3 * scale) # Gap from hull center
-            end_y_local = side * (SPACESHIP_SIZE * 0.3 * scale + panel_length)
+            start_y_local = side * (config.Visualization.PROBE_SIZE_PX * 0.3 * scale) # Gap from hull center
+            end_y_local = side * (config.Visualization.PROBE_SIZE_PX * 0.3 * scale + panel_length)
             
             corners_local = [
                 np.array([mount_x_local - panel_width/2, start_y_local]),
@@ -235,14 +235,14 @@ class DetailedProbeRenderer:
         sensor_highlight = (210, 220, 255) # Brighter highlight
 
         # Forward sensor pod (more prominent)
-        fwd_sensor_offset = np.array([SPACESHIP_SIZE * 0.9 * scale, 0]) # Further forward
+        fwd_sensor_offset = np.array([config.Visualization.PROBE_SIZE_PX * 0.9 * scale, 0]) # Further forward
         fwd_sensor_pos = pos + self._rotate_point(fwd_sensor_offset, angle)
         pygame.draw.circle(surface, sensor_color, fwd_sensor_pos.astype(int), int(max(2, 4*scale)))
         pygame.draw.circle(surface, sensor_highlight, fwd_sensor_pos.astype(int), int(max(1, 2*scale)))
 
         # Side sensor clusters
         for side in [-1, 1]:
-            side_sensor_offset = np.array([SPACESHIP_SIZE * 0.2 * scale, side * SPACESHIP_SIZE * 0.4 * scale])
+            side_sensor_offset = np.array([config.Visualization.PROBE_SIZE_PX * 0.2 * scale, side * config.Visualization.PROBE_SIZE_PX * 0.4 * scale])
             side_sensor_pos = pos + self._rotate_point(side_sensor_offset, angle)
             pygame.draw.rect(surface, sensor_color, (*(side_sensor_pos - np.array([2,2])*scale).astype(int), int(4*scale), int(4*scale)),0, int(1*scale))
 
@@ -252,10 +252,10 @@ class DetailedProbeRenderer:
 
         # More distributed RCS thrusters for realism
         rcs_local_positions = [
-            np.array([ SPACESHIP_SIZE*0.6*scale,  SPACESHIP_SIZE*0.3*scale]), # Front-ish right
-            np.array([ SPACESHIP_SIZE*0.6*scale, -SPACESHIP_SIZE*0.3*scale]), # Front-ish left
-            np.array([-SPACESHIP_SIZE*0.5*scale,  SPACESHIP_SIZE*0.4*scale]), # Rear-ish right
-            np.array([-SPACESHIP_SIZE*0.5*scale, -SPACESHIP_SIZE*0.4*scale]), # Rear-ish left
+            np.array([ config.Visualization.PROBE_SIZE_PX*0.6*scale,  config.Visualization.PROBE_SIZE_PX*0.3*scale]), # Front-ish right
+            np.array([ config.Visualization.PROBE_SIZE_PX*0.6*scale, -config.Visualization.PROBE_SIZE_PX*0.3*scale]), # Front-ish left
+            np.array([-config.Visualization.PROBE_SIZE_PX*0.5*scale,  config.Visualization.PROBE_SIZE_PX*0.4*scale]), # Rear-ish right
+            np.array([-config.Visualization.PROBE_SIZE_PX*0.5*scale, -config.Visualization.PROBE_SIZE_PX*0.4*scale]), # Rear-ish left
         ]
         
         for rcs_offset_local in rcs_local_positions:
@@ -279,9 +279,9 @@ class DetailedProbeRenderer:
 
         # Define light positions (local to probe, angle=0 means forward is +X)
         indicator_local_positions = [
-            np.array([SPACESHIP_SIZE * 0.7 * scale, 0]),                         # Front center
-            np.array([-SPACESHIP_SIZE * 0.4 * scale,  SPACESHIP_SIZE * 0.35 * scale]), # Rear right
-            np.array([-SPACESHIP_SIZE * 0.4 * scale, -SPACESHIP_SIZE * 0.35 * scale]), # Rear left
+            np.array([config.Visualization.PROBE_SIZE_PX * 0.7 * scale, 0]),                         # Front center
+            np.array([-config.Visualization.PROBE_SIZE_PX * 0.4 * scale,  config.Visualization.PROBE_SIZE_PX * 0.35 * scale]), # Rear right
+            np.array([-config.Visualization.PROBE_SIZE_PX * 0.4 * scale, -config.Visualization.PROBE_SIZE_PX * 0.35 * scale]), # Rear left
         ]
 
         for light_offset_local in indicator_local_positions:

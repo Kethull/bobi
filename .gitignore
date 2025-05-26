@@ -1,3 +1,4 @@
+*.pyc
 __pycache__/config.cpython-313.pyc
 __pycache__/environment.cpython-313.pyc
 __pycache__/probe.cpython-313.pyc
@@ -27,3 +28,8 @@ ppo_bobiverse_tensorboard/PPO_18/events.out.tfevents.1748188045.DESKTOP-Q46LAM5.
 ppo_bobiverse_tensorboard/PPO_20/events.out.tfevents.1748246246.DESKTOP-Q46LAM5.848.0
 ppo_bobiverse_tensorboard/PPO_21/events.out.tfevents.1748246465.DESKTOP-Q46LAM5.2336.0
 ppo_bobiverse_tensorboard/PPO_22/events.out.tfevents.1748246466.DESKTOP-Q46LAM5.13696.0
+__pycache__/organic_ship_renderer.cpython-313.pyc
+__pycache__/physics_utils.cpython-313.pyc
+__pycache__/test_physics_utils.cpython-313.pyc
+__pycache__/organic_ship_renderer.cpython-313.pyc
+__pycache__/organic_ship_renderer.cpython-313.pyc

@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
 import math
-from config import * # Assuming config might have UI related constants later
+from config import config # Assuming config might have UI related constants later
 
 class ModernUI:
     def __init__(self, screen_width, screen_height):
@@ -324,7 +324,7 @@ class ModernUI:
             probe_panel_rect = pygame.Rect(self.screen_width - 260, 170, 250, 220) # Adjusted height
             probe_details_content = [
                 {'text': f"Probe ID: {self.selected_probe_id}", 'font': 'title'},
-                f"Energy: {self.selected_probe_details['energy']:.1f} / {MAX_ENERGY}",
+                f"Energy: {self.selected_probe_details['energy']:.1f} / {config.Probe.MAX_ENERGY}",
                 f"Position: ({self.selected_probe_details['position'][0]:.1f}, {self.selected_probe_details['position'][1]:.1f})",
                 f"Velocity: ({self.selected_probe_details['velocity'][0]:.1f}, {self.selected_probe_details['velocity'][1]:.1f})",
                 f"Angle: {math.degrees(self.selected_probe_details['angle']):.1f}°",
@@ -336,7 +336,7 @@ class ModernUI:
 
             meter_center = (self.screen_width - 260 + 60, probe_panel_rect.bottom + 40)
             self.draw_circular_meter(surface, meter_center, 30,
-                                     self.selected_probe_details['energy'], MAX_ENERGY,
+                                     self.selected_probe_details['energy'], config.Probe.MAX_ENERGY,
                                      self.ui_colors['accent_green'], "Energy")
         
         # 3. Probe List Panel (Bottom-Left)

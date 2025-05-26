@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
 import math
-from config import *
+from config import config
 
 class OrganicShipRenderer:
     def __init__(self):
@@ -29,14 +29,14 @@ class OrganicShipRenderer:
         }
         
         # Ship proportions (scaled to SPACESHIP_SIZE)
-        self.ship_length = SPACESHIP_SIZE * 2.5   # Much more elongated
-        self.ship_width = SPACESHIP_SIZE * 0.8
-        self.engine_length = SPACESHIP_SIZE * 0.6
+        self.ship_length = config.Visualization.PROBE_SIZE_PX * 2.5   # Much more elongated
+        self.ship_width = config.Visualization.PROBE_SIZE_PX * 0.8
+        self.engine_length = config.Visualization.PROBE_SIZE_PX * 0.6
         
     def draw_organic_ship(self, surface, probe, screen_pos, scale=1.0):
         """Draw elegant organic spacecraft"""
         angle = probe.get('angle', 0)
-        energy_ratio = probe['energy'] / MAX_ENERGY
+        energy_ratio = probe['energy'] / config.Probe.MAX_ENERGY
         is_low_power = probe['energy'] <= 0
         
         # Scale dimensions
