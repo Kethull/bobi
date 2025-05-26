@@ -33,9 +33,8 @@ class CelestialBody:
     # For Moon, this would be its primary (e.g., Earth)
     orbits_around: str = None # Name of the body it orbits, None for Sun or bodies orbiting Sun
     
-    # Store recent path for drawing orbital lines
+    # Store path for drawing orbital lines
     orbit_path: List[np.ndarray] = field(default_factory=list)
-    orbit_path_max_length: int = 200 # Max points to store for the trail
 
     def __post_init__(self):
         if not isinstance(self.position_sim, np.ndarray):
@@ -46,10 +45,8 @@ class CelestialBody:
             self.orbit_path = []
             
     def add_to_orbit_path(self, position: np.ndarray):
-        """Adds a position to the orbit path and maintains its max length."""
+        """Adds a position to the orbit path."""
         self.orbit_path.append(position.copy()) # Store a copy
-        if len(self.orbit_path) > self.orbit_path_max_length:
-            self.orbit_path.pop(0)
 
 class OrbitalMechanics:
     def __init__(self):
@@ -238,75 +235,59 @@ class OrbitalMechanics:
         Moon's orbit around Earth needs special handling (simplified for now or hierarchical).
         """
         
-        # For bodies orbiting the Sun (planets)
-        planets = [body for body in all_bodies if body.name != "Sun" and (body.orbits_around is None or body.orbits_around == "Sun")]
-        
-        for body in planets:
-            # Bodies to consider for gravitational pull on 'body'
-            # Includes the Sun and all other planets
-            influencing_bodies = [sun] + [p for p in planets if p is not body]
-            
-            # If Moon is present and orbits Earth, Earth's calculation should include Moon's pull if desired for high accuracy,
-            # but for now, we assume planets are dominant for each other and Sun.
-            # Moon will be handled separately.
+        # Create a dictionary for quick lookup of bodies by name
+        body_map = {body.name: body for body in all_bodies}
+        body_map[sun.name] = sun
 
-            # 1. Calculate net gravitational acceleration on body
-            accel_km_s2 = self.calculate_gravitational_acceleration(body, influencing_bodies)
+        # Update planets (bodies orbiting the Sun)
+        planets_to_update = [body for body in all_bodies if body.orbits_around == "Sun" or (body.orbits_around is None and body.name != "Sun")]
+
+        for planet in planets_to_update:
+            # Influencing bodies for a planet: Sun and all other planets
+            # Moons' gravitational effects on planets are considered minor for this simulation level.
+            influencing_bodies_for_planet = [sun] + [p for p in planets_to_update if p is not planet]
             
-            # 2. Convert accel_km_s2 to accel_sim_s2
+            accel_km_s2 = self.calculate_gravitational_acceleration(planet, influencing_bodies_for_planet)
             accel_sim_s2 = accel_km_s2 * self.KM_SCALE
             
-            # 3. Update velocity (Euler method)
-            body.velocity_sim_s += accel_sim_s2 * dt_seconds
-            
-            # 4. Update position (Euler method)
-            # Position is relative to Sun if calculated initially that way, then made absolute.
-            # Here, position_sim is already in world coordinates.
-            body.position_sim += body.velocity_sim_s * dt_seconds
-            body.add_to_orbit_path(body.position_sim) # Add current position to path
+            planet.velocity_sim_s += accel_sim_s2 * dt_seconds
+            planet.position_sim += planet.velocity_sim_s * dt_seconds
+            planet.add_to_orbit_path(planet.position_sim)
 
-            if DEBUG_ORBITAL_MECHANICS and body.name in ["Mercury", "Earth", "Mars"]:
-                 print(f"DEBUG: {body.name} Pos={body.position_sim/AU_SCALE} AU, Vel={body.velocity_sim_s/AU_SCALE} AU/s, Accel_sim={accel_sim_s2}")
+            if DEBUG_ORBITAL_MECHANICS and planet.name in ["Mercury", "Earth", "Mars", "Jupiter"]:
+                 print(f"DEBUG: {planet.name} Pos={planet.position_sim/AU_SCALE} AU, Vel={planet.velocity_sim_s/AU_SCALE} AU/s, Accel_sim={accel_sim_s2}")
+
+        # Update moons (bodies orbiting other planets)
+        moons_to_update = [body for body in all_bodies if body.orbits_around is not None and body.orbits_around != "Sun"]
+
+        for moon in moons_to_update:
+            primary_body = body_map.get(moon.orbits_around)
+            if not primary_body:
+                if DEBUG_ORBITAL_MECHANICS:
+                    print(f"DEBUG: Primary body {moon.orbits_around} not found for moon {moon.name}. Skipping update.")
+                continue
+
+            # Influencing bodies for a moon: its primary planet, the Sun (major perturbation),
+            # and potentially other nearby massive bodies (e.g., other planets, though simplified here).
+            # For simplicity, we'll consider primary and Sun. Other planets' effects on moons are secondary.
+            influencing_bodies_for_moon = [primary_body, sun]
+            # Optionally, add other major planets if higher accuracy is needed:
+            # influencing_bodies_for_moon.extend([p for p in planets_to_update if p.name != primary_body.name])
 
 
-        # Handle Moon (orbiting Earth) - This is a simplified approach
-        # For a more accurate model, Earth-Moon barycenter would orbit the Sun,
-        # and Moon would orbit that barycenter (or Earth).
-        # Here, Moon orbits Earth, which itself orbits the Sun.
-        moon = next((b for b in all_bodies if b.name == "Moon" and b.orbits_around == "Earth"), None)
-        earth = next((b for b in all_bodies if b.name == "Earth"), None)
+            accel_km_s2 = self.calculate_gravitational_acceleration(moon, influencing_bodies_for_moon)
+            accel_sim_s2 = accel_km_s2 * self.KM_SCALE
 
-        if moon and earth:
-            # Influencing bodies for Moon: Earth (primary), Sun (perturbation), other planets (minor perturbations)
-            # For this phase, let's simplify: Moon orbits Earth, Earth's position is already updated.
-            # Acceleration on Moon due to Earth:
-            accel_moon_due_to_earth_km_s2 = self.calculate_gravitational_acceleration(moon, [earth])
-            
-            # Acceleration on Moon due to Sun (perturbation)
-            accel_moon_due_to_sun_km_s2 = self.calculate_gravitational_acceleration(moon, [sun])
-
-            # Total acceleration on Moon
-            total_accel_moon_km_s2 = accel_moon_due_to_earth_km_s2 + accel_moon_due_to_sun_km_s2
-            # Could add other planets for more accuracy, but this is a start.
-
-            accel_moon_sim_s2 = total_accel_moon_km_s2 * self.KM_SCALE
-
-            moon.velocity_sim_s += accel_moon_sim_s2 * dt_seconds
-            # Moon's position is relative to Earth's center of mass in its initial state vector calculation.
-            # Here, its position_sim should be world coordinates.
-            # If moon.position_sim was relative to Earth, it would be:
-            # moon.position_sim += moon.velocity_sim_s * dt_seconds
-            # And then its world position would be earth.position_sim + moon.position_sim (if moon.position_sim is relative)
-            # However, CelestialBody.position_sim is intended to be world coordinates after initialization.
-            # So, the update is direct.
+            moon.velocity_sim_s += accel_sim_s2 * dt_seconds
+            # Moon's position is absolute world coordinates.
             moon.position_sim += moon.velocity_sim_s * dt_seconds
-            moon.add_to_orbit_path(moon.position_sim) # Add current position to path
-            
+            moon.add_to_orbit_path(moon.position_sim)
+
             if DEBUG_ORBITAL_MECHANICS:
-                print(f"DEBUG: Moon Pos={moon.position_sim/AU_SCALE} AU, Vel={moon.velocity_sim_s/AU_SCALE} AU/s (rel to Sun)")
-                print(f"DEBUG: Earth Pos={earth.position_sim/AU_SCALE} AU")
-                relative_pos_moon_earth_au = (moon.position_sim - earth.position_sim) / AU_SCALE
-                print(f"DEBUG: Moon Pos rel Earth={relative_pos_moon_earth_au} AU, Dist={np.linalg.norm(relative_pos_moon_earth_au)} AU")
+                print(f"DEBUG: {moon.name} (orbits {primary_body.name}) Pos={moon.position_sim/AU_SCALE} AU, Vel={moon.velocity_sim_s/AU_SCALE} AU/s (world)")
+                if primary_body:
+                    relative_pos_moon_primary_au = (moon.position_sim - primary_body.position_sim) / AU_SCALE
+                    print(f"DEBUG: {moon.name} Pos rel {primary_body.name}={relative_pos_moon_primary_au} AU, Dist={np.linalg.norm(relative_pos_moon_primary_au)} AU")
 
 
 # Commenting out AsteroidBelt for now as it's not part of the immediate refactoring

@@ -180,6 +180,114 @@ PLANET_DATA = {
         'longitude_of_ascending_node_deg': 49.558,
         'argument_of_perihelion_deg': 286.502, # (Lp - LoAN = 336.060 - 49.558)
         'mean_anomaly_at_epoch_deg': 19.412 # (L - Lp = 355.45332 - 336.04084)
+    },
+    'Jupiter': {
+        'mass_kg': 1898.19e24, # 317.8 Earth masses
+        'radius_km': 69911.0,
+        'display_radius_sim': 200,
+        'color': (200, 160, 120),
+        'semi_major_axis_au': 5.2044,
+        'eccentricity': 0.0489,
+        'inclination_deg': 1.303,
+        'longitude_of_ascending_node_deg': 100.464,
+        'argument_of_perihelion_deg': 273.867, # (Lp - LoAN)
+        'mean_anomaly_at_epoch_deg': 20.020  # (L - Lp)
+    },
+    'Io': { # Orbits Jupiter
+        'mass_kg': 0.089319e24,
+        'radius_km': 1821.6,
+        'display_radius_sim': 20,
+        'color': (255, 255, 150),
+        'semi_major_axis_au': 0.002819, # 421,700 km
+        'eccentricity': 0.0041,
+        'inclination_deg': 0.050, # Relative to Jupiter's equator
+        'longitude_of_ascending_node_deg': 0.0, # Placeholder - complex
+        'argument_of_perihelion_deg': 0.0, # Placeholder
+        'mean_anomaly_at_epoch_deg': 0.0 # Placeholder
+    },
+    'Europa': { # Orbits Jupiter
+        'mass_kg': 0.04800e24,
+        'radius_km': 1560.8,
+        'display_radius_sim': 18,
+        'color': (200, 200, 255),
+        'semi_major_axis_au': 0.004486, # 670,900 km
+        'eccentricity': 0.0094,
+        'inclination_deg': 0.470, # Relative to Jupiter's equator
+        'longitude_of_ascending_node_deg': 0.0, # Placeholder
+        'argument_of_perihelion_deg': 0.0, # Placeholder
+        'mean_anomaly_at_epoch_deg': 100.0 # Placeholder
+    },
+    'Ganymede': { # Orbits Jupiter
+        'mass_kg': 0.14819e24,
+        'radius_km': 2634.1,
+        'display_radius_sim': 25,
+        'color': (160, 160, 180),
+        'semi_major_axis_au': 0.007155, # 1,070,400 km
+        'eccentricity': 0.0013,
+        'inclination_deg': 0.204, # Relative to Jupiter's equator
+        'longitude_of_ascending_node_deg': 0.0, # Placeholder
+        'argument_of_perihelion_deg': 0.0, # Placeholder
+        'mean_anomaly_at_epoch_deg': 200.0 # Placeholder
+    },
+    'Callisto': { # Orbits Jupiter
+        'mass_kg': 0.10759e24,
+        'radius_km': 2410.3,
+        'display_radius_sim': 22,
+        'color': (100, 80, 70),
+        'semi_major_axis_au': 0.012585, # 1,882,700 km
+        'eccentricity': 0.0074,
+        'inclination_deg': 0.205, # Relative to Jupiter's equator
+        'longitude_of_ascending_node_deg': 0.0, # Placeholder
+        'argument_of_perihelion_deg': 0.0, # Placeholder
+        'mean_anomaly_at_epoch_deg': 300.0 # Placeholder
+    },
+    'Saturn': {
+        'mass_kg': 568.34e24, # 95.16 Earth masses
+        'radius_km': 58232.0,
+        'display_radius_sim': 180,
+        'color': (234, 214, 184),
+        'semi_major_axis_au': 9.5826,
+        'eccentricity': 0.0565,
+        'inclination_deg': 2.485,
+        'longitude_of_ascending_node_deg': 113.665,
+        'argument_of_perihelion_deg': 339.392, # (Lp - LoAN)
+        'mean_anomaly_at_epoch_deg': 317.020 # (L - Lp)
+    },
+    'Titan': { # Orbits Saturn
+        'mass_kg': 0.13452e24,
+        'radius_km': 2574.7,
+        'display_radius_sim': 24,
+        'color': (240, 190, 100),
+        'semi_major_axis_au': 0.008168, # 1,221,870 km
+        'eccentricity': 0.0288,
+        'inclination_deg': 0.34854, # Relative to Saturn's equator
+        'longitude_of_ascending_node_deg': 0.0, # Placeholder
+        'argument_of_perihelion_deg': 0.0, # Placeholder
+        'mean_anomaly_at_epoch_deg': 0.0 # Placeholder
+    },
+    'Uranus': {
+        'mass_kg': 86.813e24, # 14.536 Earth masses
+        'radius_km': 25362.0,
+        'display_radius_sim': 120,
+        'color': (155, 221, 221),
+        'semi_major_axis_au': 19.2184,
+        'eccentricity': 0.0457,
+        'inclination_deg': 0.772,
+        'longitude_of_ascending_node_deg': 74.006,
+        'argument_of_perihelion_deg': 96.999, # (Lp - LoAN)
+        'mean_anomaly_at_epoch_deg': 142.238600 # (L - Lp)
+    },
+    'Neptune': {
+        'mass_kg': 102.413e24, # 17.147 Earth masses
+        'radius_km': 24622.0,
+        'display_radius_sim': 110,
+        'color': (63, 81, 181),
+        'semi_major_axis_au': 30.110,
+        'eccentricity': 0.0113,
+        'inclination_deg': 1.770,
+        'longitude_of_ascending_node_deg': 131.783,
+        'argument_of_perihelion_deg': 276.336, # (Lp - LoAN)
+        'mean_anomaly_at_epoch_deg': 256.228 # (L - Lp)
     }
 }
 
