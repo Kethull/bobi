@@ -36,7 +36,8 @@ class Visualization:
         self.selected_probe_id_ui = None
         self.ui_probe_id_rects = {} # Will be managed by ModernUI or adapted
         self.probe_trails = {} # Keep for now, might be replaced or enhanced
-        self.camera_offset = np.array([0.0, 0.0]) # For starfield parallax
+        # camera_offset is the world coordinate at the center of the screen
+        self.camera_offset = np.array([WORLD_SIZE_SIM / 2, WORLD_SIZE_SIM / 2], dtype=np.float64)
         self.zoom_level = 1.0 # Initial zoom level for the new WORLD_SIZE
         
         # Colors (old color dict, ModernUI has its own, this might be phased out)
@@ -64,15 +65,18 @@ class Visualization:
         self.probe_trails = {}
         
     def world_to_screen(self, world_pos):
-        """Convert world coordinates to screen coordinates, centering the world"""
-        # Calculate the offset from the world center
-        offset_x = world_pos[0] - (WORLD_SIZE_SIM / 2)
-        offset_y = world_pos[1] - (WORLD_SIZE_SIM / 2)
-
-        # Scale the offset by zoom level and add the screen center
-        screen_x = int(offset_x * self.scale_x * self.zoom_level + SCREEN_WIDTH / 2)
-        screen_y = int(offset_y * self.scale_y * self.zoom_level + SCREEN_HEIGHT / 2)
-
+        """Convert world coordinates to screen coordinates, using camera_offset and zoom."""
+        # world_pos is an absolute world coordinate.
+        # self.camera_offset is the world coordinate at the center of the screen.
+        
+        # Calculate position relative to the camera's center in world units
+        relative_world_x = world_pos[0] - self.camera_offset[0]
+        relative_world_y = world_pos[1] - self.camera_offset[1]
+        
+        # Scale by zoom and world-to-screen scale, then add screen center
+        screen_x = int(relative_world_x * self.scale_x * self.zoom_level + SCREEN_WIDTH / 2)
+        screen_y = int(relative_world_y * self.scale_y * self.zoom_level + SCREEN_HEIGHT / 2)
+        
         return (screen_x, screen_y)
     
     def render(self, environment, probe_agents: Dict = None):
@@ -83,20 +87,21 @@ class Visualization:
         # Clear with space background
         self.screen.fill((5, 5, 15)) # Darker space blue/black
         
-        # Draw animated starfield (parallax needs camera_offset)
+        # Update camera position to follow selected probe (if any)
         if self.selected_probe_id_ui is not None and self.selected_probe_id_ui in environment.probes:
             selected_probe_world_pos = environment.probes[self.selected_probe_id_ui]['position']
-            target_camera_world_center = selected_probe_world_pos
-            screen_center_world_x = (SCREEN_WIDTH / 2) / self.scale_x if self.scale_x != 0 else 0
-            screen_center_world_y = (SCREEN_HEIGHT / 2) / self.scale_y if self.scale_y != 0 else 0
+            # Target for camera_offset is the selected probe's position
+            target_camera_world_center_x = selected_probe_world_pos[0]
+            target_camera_world_center_y = selected_probe_world_pos[1]
             
-            target_offset_x = target_camera_world_center[0] - screen_center_world_x
-            target_offset_y = target_camera_world_center[1] - screen_center_world_y
-            
-            self.camera_offset[0] += (target_offset_x - self.camera_offset[0]) * 0.05
-            self.camera_offset[1] += (target_offset_y - self.camera_offset[1]) * 0.05 # Moved here
-        # else for camera logic if needed, or just default camera_offset if no probe selected
+            # Smoothly interpolate camera_offset towards the target
+            lerp_factor = 0.05 # Controls how quickly the camera follows
+            self.camera_offset[0] += (target_camera_world_center_x - self.camera_offset[0]) * lerp_factor
+            self.camera_offset[1] += (target_camera_world_center_y - self.camera_offset[1]) * lerp_factor
+        # If no probe is selected, camera_offset remains, or could slowly drift back to default (e.g. WORLD_SIZE_SIM / 2)
         
+        # Draw animated starfield. It uses self.camera_offset which is now the world center.
+        # The StarField class should interpret this as the center point for its parallax calculation.
         self.starfield.draw(self.screen, self.camera_offset)
         
         self._draw_celestial_bodies(environment) # Call to draw celestial bodies
@@ -162,18 +167,21 @@ class Visualization:
             if resource.amount > 0:
                 screen_pos = self.world_to_screen(resource.position)
                 
-                # Size based on remaining amount
-                base_size = max(3, int(resource.amount / RESOURCE_MAX_AMOUNT * 15)) # type: ignore
+                # Size based on remaining amount and zoom level
+                min_display_size_pixels = 2 # Minimum pixel size on screen
+                scaled_base_size = (resource.amount / RESOURCE_MAX_AMOUNT * 15) * self.zoom_level # type: ignore
+                base_size = max(min_display_size_pixels, int(scaled_base_size))
                 
                 # Add resource glow effect
                 # Intensity can be linked to resource amount or be a fixed value
                 glow_intensity = 0.5 + (resource.amount / RESOURCE_MAX_AMOUNT) * 0.5 # type: ignore
-                glow_radius = base_size * 2.5
+                # Glow radius should also scale with zoom, relative to the base_size
+                glow_radius = base_size * 2.5 # base_size is now screen-scaled
                 self.visual_effects.draw_resource_glow(self.screen, screen_pos, glow_radius, glow_intensity)
 
                 # Draw the main resource circle on top of the glow
                 pygame.draw.circle(self.screen, self.colors['resource'],
-                                 screen_pos, base_size)
+                                 screen_pos, base_size) # base_size is now screen-scaled
                 
                 # Draw amount text (optional, can be part of ModernUI later)
                 if resource.amount > 10 and SHOW_SIMPLE_RESOURCE_INFO: # Add SHOW_SIMPLE_RESOURCE_INFO to config
@@ -226,12 +234,21 @@ class Visualization:
             is_low_power = probe_data['energy'] <= 0
             current_probe_angle_rad = probe_data.get('angle', 0.0)
 
-            # Draw organic ship
+            # Draw organic ship, scaled by zoom level
+            # Ensure a minimum and maximum visual scale for probes to prevent them from becoming too tiny or excessively large.
+            min_probe_screen_scale = 0.5  # Minimum visual scale factor on screen
+            max_probe_screen_scale = 3.0  # Maximum visual scale factor on screen
+            effective_probe_scale = np.clip(self.zoom_level * 1.0, min_probe_screen_scale, max_probe_screen_scale) # SHIP_SCALE_FACTOR is already in organic_ship_renderer
+
             self.ship_renderer.draw_organic_ship(
-                self.screen, probe_data, screen_pos, scale=1.0
+                self.screen, probe_data, screen_pos, scale=effective_probe_scale
             )
             
             # Enhanced thruster effects
+            # Thruster and mining beam visuals are drawn relative to the ship's screen position and angle.
+            # Their apparent size will scale with the ship if their drawing logic uses the ship's scaled size.
+            # The SPACESHIP_SIZE is a world unit size. Screen size is derived.
+            # Let's ensure laser start position calculation uses a scaled spaceship size.
             smoothing_state = probe_data.get('action_smoothing_state', {})
             thrust_ramp_value = smoothing_state.get('current_thrust_ramp', 0.0)
             if probe_data.get('is_thrusting_visual', False) and not is_low_power and thrust_ramp_value > 0.01:
@@ -253,9 +270,39 @@ class Visualization:
                 mining_target_world_pos = probe_data['mining_target_pos_visual']
                 mining_target_screen_pos = self.world_to_screen(mining_target_world_pos)
                 
-                nose_offset_dist = SPACESHIP_SIZE * 0.7 
-                laser_start_x = screen_pos[0] + nose_offset_dist * math.cos(current_probe_angle_rad)
-                laser_start_y = screen_pos[1] + nose_offset_dist * math.sin(current_probe_angle_rad)
+                # SPACESHIP_SIZE is in world units. For screen calculations, it needs to be scaled by zoom and the world-to-screen scale.
+                # The ship_renderer's draw_organic_ship already handles the base scaling.
+                # Here, we need the offset from the ship's center (screen_pos) to its nose in screen pixels.
+                # The ship_renderer.get_scaled_dimensions(effective_probe_scale) could give current ship screen width/height.
+                # For simplicity, let's assume the ship_renderer's internal scaling handles the visual size,
+                # and the laser should originate from the "nose" of this scaled ship.
+                # The `effective_probe_scale` is applied to the base `SPACESHIP_SIZE` effectively.
+                # So, the screen offset should be based on `SPACESHIP_SIZE * effective_probe_scale * self.scale_x` (approx)
+                # Let's use the ship_renderer's main axis length after scaling.
+                # This might require a helper in OrganicShipRenderer or use a fixed proportion of its current screen size.
+                # For now, let's scale the offset by effective_probe_scale, assuming SPACESHIP_SIZE is the base.
+                # This is a bit indirect. A better way would be for ship_renderer to return its current screen dimensions.
+                
+                # Simplified: scale the world offset by the effective_probe_scale and then by screen scale
+                # This is not quite right. The screen_pos is already the center. We need an offset in screen pixels.
+                # The ship_renderer.draw_organic_ship uses SPACESHIP_SIZE * scale internally.
+                # So, the screen offset for the laser should be roughly (SPACESHIP_SIZE * effective_probe_scale * self.scale_x) * 0.7
+                # Let's assume the ship_renderer.draw_organic_ship draws the ship with a characteristic size of
+                # roughly (SPACESHIP_SIZE * self.scale_x * effective_probe_scale) pixels.
+                
+                # The ship's visual size on screen is now influenced by effective_probe_scale.
+                # The laser should start from the nose of this scaled ship.
+                # The ship_renderer uses SHIP_SCALE_FACTOR * SPACESHIP_SIZE * scale (which is effective_probe_scale)
+                # So, the characteristic screen dimension is roughly:
+                # (SHIP_SCALE_FACTOR from config) * SPACESHIP_SIZE * self.scale_x * effective_probe_scale
+                # Let's use a simplified screen offset based on the effective_probe_scale applied to a base screen size.
+                base_screen_ship_size = SPACESHIP_SIZE * min(self.scale_x, self.scale_y) # Base ship size in pixels if zoom=1, effective_scale=1
+                scaled_screen_ship_size = base_screen_ship_size * effective_probe_scale
+                
+                nose_offset_dist_screen = scaled_screen_ship_size * 0.7 # Offset in screen pixels from center to nose
+                                
+                laser_start_x = screen_pos[0] + nose_offset_dist_screen * math.cos(current_probe_angle_rad)
+                laser_start_y = screen_pos[1] + nose_offset_dist_screen * math.sin(current_probe_angle_rad)
                 laser_start_screen_pos = (int(laser_start_x), int(laser_start_y))
 
                 self.visual_effects.draw_mining_beam_advanced(

@@ -20,7 +20,7 @@ SUN_POSITION_SIM = [WORLD_SIZE_SIM / 2, WORLD_SIZE_SIM / 2]
 INITIAL_PROBES = 1 # Retained
 
 # Resource Configuration (largely retained, may be less relevant for pure solar system sim)
-RESOURCE_COUNT = 1
+RESOURCE_COUNT = 15
 RESOURCE_MIN_AMOUNT = 10000
 RESOURCE_MAX_AMOUNT = 20000
 RESOURCE_REGEN_RATE = 0.00

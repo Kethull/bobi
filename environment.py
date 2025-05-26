@@ -66,12 +66,12 @@ class SpaceEnvironment(gym.Env): # Copied from previous version, might need prun
     def _generate_resources(self): # Simplified, assuming resources are less critical for solar system focus
         self.resources = []
         # For now, fewer resources if any, as focus is on planets
-        # for _ in range(RESOURCE_COUNT if 'RESOURCE_COUNT' in globals() else 1): # Use RESOURCE_COUNT from config
-        #     pos = (random.uniform(0, self.world_width), 
-        #            random.uniform(0, self.world_height))
-        #     amount = random.uniform(RESOURCE_MIN_AMOUNT if 'RESOURCE_MIN_AMOUNT' in globals() else 100, 
-        #                             RESOURCE_MAX_AMOUNT if 'RESOURCE_MAX_AMOUNT' in globals() else 200)
-        #     self.resources.append(Resource(pos, amount, amount))
+        for _ in range(RESOURCE_COUNT if 'RESOURCE_COUNT' in globals() else 1): # Use RESOURCE_COUNT from config
+            pos = (random.uniform(0, self.world_width),
+                   random.uniform(0, self.world_height))
+            amount = random.uniform(RESOURCE_MIN_AMOUNT if 'RESOURCE_MIN_AMOUNT' in globals() else 100,
+                                    RESOURCE_MAX_AMOUNT if 'RESOURCE_MAX_AMOUNT' in globals() else 200)
+            self.resources.append(Resource(pos, amount, amount))
             
     def add_probe(self, probe_id: int, position: Tuple[float, float], 
                   energy: float = INITIAL_ENERGY, generation: int = 0):
@@ -122,12 +122,11 @@ class SpaceEnvironment(gym.Env): # Copied from previous version, might need prun
         self.messages = []
         self._generate_resources()
         # Add initial probes if needed by the simulation logic
-        # self.add_probe(0, (self.world_width / 2, self.world_height / 2))
-        # obs = {}
-        # if 0 in self.probes:
-        #    obs[0] = self.get_observation(0)
-        # return obs
-        return {} # Return empty dict if no probes are managed by default
+        self.add_probe(0, (self.world_width / 2, self.world_height / 2)) # Assuming INITIAL_PROBES is 1 for now
+        obs = {}
+        if 0 in self.probes:
+           obs[0] = self.get_observation(0)
+        return obs
 
 # Your new SolarSystemEnvironment class:
 class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially simplified) SpaceEnvironment
