@@ -5,9 +5,10 @@ import time
 from typing import Dict
 import pickle
 import os
+import psutil # For memory monitoring
 
-from config import *
-from environment import SolarSystemEnvironment # Changed from SpaceEnvironment
+from config import config # Use the global config instance
+from environment import SolarSystemEnvironment
 from probe import ProbeAgent
 from visualization import Visualization
 
@@ -19,6 +20,7 @@ class BobiverseSimulation:
         self.running = True
         self.training_mode = True # Can be set to True to enable training
         self.episode_count = 0
+        self.process = psutil.Process(os.getpid()) # Get current process for memory monitoring
         
     def initialize_agents(self):
         """Initialize RL agents for initial probes"""
@@ -26,8 +28,11 @@ class BobiverseSimulation:
             if probe_id not in self.probe_agents: # Ensure agent is not re-initialized
                 self.probe_agents[probe_id] = ProbeAgent(probe_id, self.environment)
     
-    def run_episode(self, max_steps=EPISODE_LENGTH, render=True, train=False):
+    def run_episode(self, max_steps=None, render=True, train=False): # max_steps from config
         """Run a single episode of the simulation"""
+        if max_steps is None:
+            max_steps = config.RL.EPISODE_LENGTH_STEPS
+
         observations = self.environment.reset()
         self.probe_agents = {} # Reset agents for new episode
         self.initialize_agents()
@@ -92,6 +97,14 @@ class BobiverseSimulation:
                 self.visualization.render(self.environment, self.probe_agents)
                 time.sleep(0.01)  # Control simulation speed
             
+            # Memory Usage Monitoring
+            if step_count % config.Monitoring.MEMORY_CHECK_INTERVAL_STEPS == 0:
+                memory_mb = self.process.memory_info().rss / (1024 * 1024)
+                if memory_mb > config.Monitoring.MEMORY_USAGE_WARN_MB:
+                    print(f"WARNING: High memory usage: {memory_mb:.2f} MB at step {step_count}")
+                elif config.Debug.DEBUG_MODE: # Optional: print memory usage in debug mode
+                    print(f"DEBUG: Memory usage: {memory_mb:.2f} MB at step {step_count}")
+
             step_count += 1
         
         # Training step for surviving agents
@@ -142,7 +155,7 @@ if __name__ == "__main__":
     for i in range(num_episodes):
         print(f"\n--- Starting Episode {i+1}/{num_episodes} ---")
         # Set train=True if you want agents to learn
-        rewards, steps = simulation.run_episode(max_steps=EPISODE_LENGTH, render=True, train=simulation.training_mode) 
+        rewards, steps = simulation.run_episode(render=True, train=simulation.training_mode) # max_steps now uses config by default
         
         if not simulation.running:
             print("Simulation terminated by user.")

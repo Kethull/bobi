@@ -10,6 +10,7 @@ from config import (
 )
 from environment import Resource # Added import for Resource
 from environment import Message # Added import for Message
+from solarsystem import CelestialBody # For type hinting and direct access
 from organic_ship_renderer import OrganicShipRenderer
 from particle_system import AdvancedParticleSystem
 from visual_effects import VisualEffects, StarField # Added imports
@@ -116,50 +117,60 @@ class Visualization:
     
     # Definition of _draw_celestial_bodies should be at class level, not interrupting render method
     def _draw_celestial_bodies(self, environment):
-        """Draws the Sun and planets, and their orbital lines."""
-        if hasattr(environment, 'get_celestial_bodies_data_for_render'):
-            celestial_data = environment.get_celestial_bodies_data_for_render()
-            for body_data in celestial_data:
-                # Draw orbital path first (so body is drawn on top)
-                if 'orbit_path' in body_data and body_data['orbit_path']:
-                    # Convert all world points to screen points
-                    screen_orbit_points = [self.world_to_screen(point) for point in body_data['orbit_path']]
-                    
-                    if len(screen_orbit_points) > 1:
-                        # Use a slightly dimmer color for the orbit, perhaps based on the body's color or a fixed one
-                        orbit_color = body_data.get('orbit_color', (100, 100, 100)) # Default to gray
-                        # Adjust alpha for orbit lines if desired, e.g., (r, g, b, alpha)
-                        # pygame.draw.lines(self.screen, orbit_color, False, screen_orbit_points, 1) # False for non-closed loop
-                        
-                        # For smoother lines, especially with zoom, consider drawing anti-aliased lines
-                        # However, pygame.draw.lines does not support anti-aliasing directly.
-                        # For thicker or anti-aliased lines, pygame.draw.aalines or custom drawing might be needed.
-                        # For simplicity, using standard lines for now.
-                        pygame.draw.lines(self.screen, orbit_color, False, screen_orbit_points, 1)
+        """Draws the Sun and planets, and their orbital lines, using caching for screen positions."""
+        
+        bodies_to_draw: List[CelestialBody] = []
+        if environment.sun:
+            bodies_to_draw.append(environment.sun)
+        bodies_to_draw.extend(environment.planets) # environment.planets contains CelestialBody objects
 
+        for body in bodies_to_draw:
+            # Draw orbital path first
+            if body.orbit_path:
+                screen_orbit_points = [self.world_to_screen(point) for point in body.orbit_path]
+                if len(screen_orbit_points) > 1:
+                    orbit_color = (100, 100, 100) # Default orbit color
+                    # Example: derive orbit color from body color
+                    # orbit_color = tuple(max(0, min(255, int(c * 0.5))) for c in body.color)
+                    pygame.draw.lines(self.screen, orbit_color, False, screen_orbit_points, 1)
 
-                # No filter, draw all bodies provided (Sun, Mercury, Venus, Earth, Mars, Moon)
-                # The data should come from CelestialBody.position_sim and CelestialBody.display_radius_sim
+            screen_pos: Optional[Tuple[int, int]] = None
+            screen_radius: Optional[int] = None
 
-                screen_pos = self.world_to_screen(body_data['position']) # position should be position_sim
-                # Scale radius by zoom_level, ensuring a minimum pixel size
-                # Use 'display_radius_sim' which is already in sim units for display
-                screen_radius = int(body_data['radius_sim'] * min(self.scale_x, self.scale_y) * self.zoom_level) # Correctly scale sim radius to screen
-                screen_radius = max(1, screen_radius) # Ensure at least 1 pixel radius
+            # Check cache validity
+            # Ensure last_cam_offset_cache is not None before comparing with np.array_equal
+            cache_valid = (
+                body.last_cam_offset_cache is not None and
+                body.screen_pos_cache is not None and
+                body.screen_radius_cache is not None and
+                abs(body.last_cam_zoom_cache - self.zoom_level) < 1e-9 and # Compare floats with tolerance
+                np.array_equal(body.last_cam_offset_cache, self.camera_offset)
+            )
 
-                pygame.draw.circle(self.screen, body_data['color'], screen_pos, screen_radius)
+            if cache_valid:
+                screen_pos = body.screen_pos_cache
+                screen_radius = body.screen_radius_cache
+            else:
+                # Calculate and cache
+                screen_pos = self.world_to_screen(body.position_sim)
+                # Use body.display_radius_sim which is already in sim units for display
+                current_screen_radius = int(body.display_radius_sim * min(self.scale_x, self.scale_y) * self.zoom_level)
+                screen_radius = max(1, current_screen_radius) # Ensure at least 1 pixel radius
                 
-                # Optional: Draw name labels if desired (can be performance intensive)
-                # if self.zoom_level > 0.01: # Example: only draw names if zoomed in enough
-                #     text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
-                #     text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
-                #     self.screen.blit(text_surface, text_rect)
-            # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
-        # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
-                # text_surface = self.small_font.render(body_data['name'], True, (200, 200, 200))
-                # text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
-                # self.screen.blit(text_surface, text_rect)
-        # Removed 'else: pass' as it's not strictly needed if the if block is self-contained
+                body.screen_pos_cache = screen_pos
+                body.screen_radius_cache = screen_radius
+                body.last_cam_zoom_cache = self.zoom_level
+                body.last_cam_offset_cache = self.camera_offset.copy() # Store a copy
+
+            if screen_pos and screen_radius is not None: # Ensure they are calculated
+                pygame.draw.circle(self.screen, body.color, screen_pos, screen_radius)
+
+                # Optional: Draw name labels
+                # Consider zoom level for label visibility
+                if self.zoom_level > 0.005 and screen_radius > 3 : # Example: only draw names if zoomed in enough & body is large enough
+                    text_surface = self.small_font.render(body.name, True, (200, 200, 200))
+                    text_rect = text_surface.get_rect(center=(screen_pos[0], screen_pos[1] - screen_radius - 10))
+                    self.screen.blit(text_surface, text_rect)
 
     def _draw_enhanced_resources(self, resources: List[Resource]): # Renamed
         """Draw resource nodes with enhanced visual effects"""

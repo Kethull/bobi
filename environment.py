@@ -6,14 +6,9 @@ import random
 import math # Added for math.radians
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
-from config import ( # Explicit imports for clarity and new constants
-    PLANET_DATA, SIM_SECONDS_PER_STEP, AU_SCALE, KM_SCALE,
-    SUN_POSITION_SIM, WORLD_SIZE_SIM, SUN_MASS_KG, DEBUG_ORBITAL_MECHANICS,
-    OBSERVATION_SPACE_SIZE, ACTION_SPACE_DIMS, EPISODE_LENGTH, # For SpaceEnvironment
-    RESOURCE_COUNT, RESOURCE_MIN_AMOUNT, RESOURCE_MAX_AMOUNT, RESOURCE_REGEN_RATE, # For SpaceEnvironment
-    INITIAL_ENERGY # For SpaceEnvironment
-)
-from solarsystem import CelestialBody, OrbitalMechanics # AsteroidBelt is commented out in solarsystem.py
+from config import config # Import the global config instance
+from solarsystem import CelestialBody, OrbitalMechanics
+from physics_utils import PhysicsError, safe_divide # Potentially useful for handling errors from orbital_mechanics
 
 # Keep existing Message, Resource, SpaceEnvironment classes if they are still used as a base
 # For brevity, assuming they are the same as before unless specified.
@@ -39,17 +34,17 @@ class Resource: # Copied from previous version if still needed
         return harvested
     
     def regenerate(self):
-        self.amount = min(self.max_amount, self.amount + RESOURCE_REGEN_RATE)
+        self.amount = min(self.max_amount, self.amount + config.Resource.REGEN_RATE_PER_STEP) # Use config
 
 class SpaceEnvironment(gym.Env): # Copied from previous version, might need pruning if not fully used
     def __init__(self):
         super().__init__()
-        # Using WORLD_SIZE_SIM from new config for consistency
-        self.world_width = WORLD_SIZE_SIM
-        self.world_height = WORLD_SIZE_SIM
-        self.resources: List[Resource] = [] # Ensure type hint
-        self.probes: Dict[int, Dict] = {}    # Ensure type hint
-        self.messages: List[Message] = []   # Ensure type hint
+        # Using config object for world dimensions
+        self.world_width = config.World.WIDTH_SIM
+        self.world_height = config.World.HEIGHT_SIM
+        self.resources: List[Resource] = []
+        self.probes: Dict[int, Dict] = {}
+        self.messages: List[Message] = []
         self.step_count = 0
         self.max_probe_id = 0
         self.total_resources_mined = 0.0
@@ -58,60 +53,90 @@ class SpaceEnvironment(gym.Env): # Copied from previous version, might need prun
         
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
-            shape=(OBSERVATION_SPACE_SIZE,),
+            shape=(config.RL.OBSERVATION_SPACE_SIZE,), # Use config
             dtype=np.float32
         )
-        self.action_space = spaces.MultiDiscrete(ACTION_SPACE_DIMS)
+        self.action_space = spaces.MultiDiscrete(config.RL.ACTION_SPACE_DIMS) # Use config
         
-    def _generate_resources(self): # Simplified, assuming resources are less critical for solar system focus
+    def _generate_resources(self):
         self.resources = []
-        # For now, fewer resources if any, as focus is on planets
-        for _ in range(RESOURCE_COUNT if 'RESOURCE_COUNT' in globals() else 1): # Use RESOURCE_COUNT from config
+        for _ in range(config.Resource.COUNT): # Use config
             pos = (random.uniform(0, self.world_width),
                    random.uniform(0, self.world_height))
-            amount = random.uniform(RESOURCE_MIN_AMOUNT if 'RESOURCE_MIN_AMOUNT' in globals() else 100,
-                                    RESOURCE_MAX_AMOUNT if 'RESOURCE_MAX_AMOUNT' in globals() else 200)
-            self.resources.append(Resource(pos, amount, amount))
+            amount = random.uniform(config.Resource.MIN_AMOUNT, config.Resource.MAX_AMOUNT) # Use config
+            self.resources.append(Resource(pos, amount, amount)) # Assuming Resource class takes max_amount
             
-    def add_probe(self, probe_id: int, position: Tuple[float, float], 
-                  energy: float = INITIAL_ENERGY, generation: int = 0):
+    def add_probe(self, probe_id: int, position: Tuple[float, float],
+                  energy: float = config.Probe.INITIAL_ENERGY, generation: int = 0): # Use config
         # Simplified probe for now, can be expanded later
         self.probes[probe_id] = {
             'position': np.array(position, dtype=np.float32),
-            'velocity': np.array([0.0, 0.0], dtype=np.float32), # Probes are not part of orbital mechanics here
+            'velocity': np.array([0.0, 0.0], dtype=np.float32), # Assuming probes are not part of n-body orbital mechanics for now
             'energy': energy,
             'alive': True,
-            # Add other necessary fields if SpaceEnvironment.step uses them
+            'trail': [], # Initialize an empty trail
+            'max_trail_points': config.Visualization.MAX_PROBE_TRAIL_POINTS
         }
         self.max_probe_id = max(self.max_probe_id, probe_id)
 
     def get_observation(self, probe_id: int) -> np.ndarray:
-        # Dummy observation if probes are not the focus
-        return np.zeros(OBSERVATION_SPACE_SIZE, dtype=np.float32)
+        return np.zeros(config.RL.OBSERVATION_SPACE_SIZE, dtype=np.float32) # Use config
 
     def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
-        # Basic step for probes if any are active
         observations = {}
         rewards = {}
         dones = {}
         infos = {}
         
-        # Minimal probe logic for now
-        for probe_id in list(self.probes.keys()): # Iterate over a copy if probes can be removed
-            if self.probes[probe_id]['alive']:
-                # Process actions if any relevant probe actions exist
-                # Update probe physics (e.g., simple movement, energy decay)
-                # self.probes[probe_id]['energy'] -= 0.1 # Example decay
-                # if self.probes[probe_id]['energy'] <= 0:
-                #     self.probes[probe_id]['alive'] = False
+        for probe_id in list(self.probes.keys()):
+            probe_data = self.probes.get(probe_id)
+            if probe_data and probe_data['alive']:
+                # --- Probe Physics Update (Example: simple movement based on action) ---
+                # This section needs to be properly implemented based on how probe actions translate to movement.
+                # For now, let's assume 'actions' might contain a target velocity or thrust.
+                # Placeholder: If actions[probe_id] provides dx, dy
+                # action_taken = actions.get(probe_id) # Get action for this specific probe
+                # if action_taken is not None and len(action_taken) >= 2: # Example: action = [thrust_x, thrust_y, ...]
+                #     # Apply thrust or set velocity based on action
+                #     # For simplicity, let's assume action directly gives a small delta_pos for now
+                #     # This is a placeholder for actual probe physics based on its RL actions
+                #     delta_pos = np.array([action_taken[0]*0.1, action_taken[1]*0.1], dtype=np.float32)
+                #     probe_data['position'] += delta_pos
+                #     # Clamp position to world bounds (optional, depends on desired behavior)
+                #     probe_data['position'][0] = np.clip(probe_data['position'][0], 0, self.world_width)
+                #     probe_data['position'][1] = np.clip(probe_data['position'][1], 0, self.world_height)
+
+                # --- Update Probe Trail ---
+                probe_data['trail'].append(probe_data['position'].copy())
+                if len(probe_data['trail']) > probe_data['max_trail_points']:
+                    probe_data['trail'].pop(0)
                 
+                # --- Energy Decay & Death ---
+                # probe_data['energy'] -= config.Probe.ENERGY_DECAY_RATE_PER_STEP # Example
+                # if probe_data['energy'] <= 0:
+                #    probe_data['alive'] = False
+                #    dones[probe_id] = True # Probe is done if it runs out of energy
+
                 observations[probe_id] = self.get_observation(probe_id)
-                rewards[probe_id] = 0.0 # Placeholder
-                dones[probe_id] = self.step_count >= EPISODE_LENGTH # Placeholder
+                rewards[probe_id] = 0.0 # Placeholder reward
+                # Probe-specific done condition might also come from energy or other factors
+                dones[probe_id] = dones.get(probe_id, False) or self.step_count >= config.RL.EPISODE_LENGTH_STEPS
                 infos[probe_id] = {}
-            else: # Remove dead probes
-                # del self.probes[probe_id] # Be careful if iterating and modifying
-                pass
+            elif probe_data and not probe_data['alive']: # If probe died this step or was already dead
+                dones[probe_id] = True # Ensure done is true for dead probes
+                # Optionally remove dead probes from self.probes here or in a separate cleanup phase
+                # For now, just mark as done.
+                if probe_id not in observations: # If it died this step, might not have obs yet
+                    observations[probe_id] = self.get_observation(probe_id) # Provide a final obs
+                    rewards[probe_id] = rewards.get(probe_id, 0.0) # Ensure reward entry
+                    infos[probe_id] = infos.get(probe_id, {})
+        
+        # Cleanup: Remove probes that are no longer alive
+        probes_to_remove = [pid for pid, pdata in self.probes.items() if not pdata['alive'] and dones.get(pid, False)]
+        for pid_to_remove in probes_to_remove:
+            if config.Debug.DEBUG_MODE: # Or a new specific debug flag for probe lifecycle
+                print(f"Step {self.step_count}: Removing dead probe {pid_to_remove}")
+            del self.probes[pid_to_remove]
 
         self.step_count += 1
         return observations, rewards, dones, infos
@@ -121,11 +146,15 @@ class SpaceEnvironment(gym.Env): # Copied from previous version, might need prun
         self.probes = {}
         self.messages = []
         self._generate_resources()
-        # Add initial probes if needed by the simulation logic
-        self.add_probe(0, (self.world_width / 2, self.world_height / 2)) # Assuming INITIAL_PROBES is 1 for now
+        # Add initial probes based on config
+        for i in range(config.Probe.INITIAL_PROBES):
+             # Distribute initial probes or place at center. For now, center.
+            self.add_probe(i, (self.world_width / 2, self.world_height / 2))
+        
         obs = {}
-        if 0 in self.probes:
-           obs[0] = self.get_observation(0)
+        for i in range(config.Probe.INITIAL_PROBES):
+            if i in self.probes:
+                 obs[i] = self.get_observation(i)
         return obs
 
 # Your new SolarSystemEnvironment class:
@@ -136,18 +165,26 @@ class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially
         self.orbital_mechanics = OrbitalMechanics()
         self.sun: Optional[CelestialBody] = None
         self.planets: List[CelestialBody] = [] # Includes Earth's Moon and other moons
-        # self.asteroid_belt: Optional[AsteroidBelt] = None # Commented out for now
+        self.initial_system_energy: Optional[float] = None # For energy conservation check
 
         self._create_celestial_bodies()
-        # if self.orbital_mechanics: # AsteroidBelt commented out
-        #     self.asteroid_belt = AsteroidBelt(self.orbital_mechanics)
+        # Calculate and store initial system energy
+        if config.Debug.MONITOR_ENERGY_CONSERVATION:
+            all_bodies_for_energy = []
+            if self.sun: all_bodies_for_energy.append(self.sun)
+            all_bodies_for_energy.extend(self.planets)
+            if all_bodies_for_energy:
+                self.initial_system_energy = self.orbital_mechanics.calculate_total_system_energy(all_bodies_for_energy)
+                if config.Debug.ORBITAL_MECHANICS: # Or a more specific energy debug flag
+                    print(f"DEBUG: Initial system energy: {self.initial_system_energy:.6e} Joules (kg*(km/s)^2)")
+
 
     def _create_celestial_bodies(self):
         self.planets = [] # Clear previous planets
-        sun_config_data = PLANET_DATA['Sun']
+        sun_config_data = config.SolarSystem.PLANET_DATA['Sun']
         self.sun = CelestialBody(
             name="Sun",
-            mass_kg=sun_config_data['mass_kg'],
+            mass_kg=sun_config_data['mass_kg'], # Already uses config.SolarSystem.SUN_MASS_KG via __init__
             radius_km=sun_config_data['radius_km'],
             display_radius_sim=sun_config_data['display_radius_sim'],
             color=sun_config_data['color'],
@@ -157,134 +194,131 @@ class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially
             omega_deg=sun_config_data['longitude_of_ascending_node_deg'],
             w_deg=sun_config_data['argument_of_perihelion_deg'],
             m0_deg=sun_config_data['mean_anomaly_at_epoch_deg'],
-            position_sim=np.array(SUN_POSITION_SIM, dtype=np.float64),
-            velocity_sim_s=np.array([0.0, 0.0], dtype=np.float64),
-            orbits_around=None # Sun doesn't orbit anything in this model
+            position_sim=np.array(config.World.CENTER_SIM, dtype=np.float64), # Use World.CENTER_SIM
+            velocity_sim_s=np.array([0.0, 0.0], dtype=np.float64), # Sun is initially static
+            orbits_around=None
         )
-        if DEBUG_ORBITAL_MECHANICS:
+        if config.Debug.ORBITAL_MECHANICS:
             print(f"DEBUG: Created Sun: Name={self.sun.name}, Pos_sim={self.sun.position_sim}, Vel_sim_s={self.sun.velocity_sim_s}")
 
-        # Create planets (Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune)
-        planet_names = ["Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"]
-        # Store references to planets that have moons - defined inside the method
-        celestial_body_references: Dict[str, CelestialBody] = {} 
-        celestial_body_references[self.sun.name] = self.sun # Add Sun for reference
+        all_created_bodies: List[CelestialBody] = [self.sun]
+        celestial_body_references: Dict[str, CelestialBody] = {self.sun.name: self.sun}
 
+        # Create planets (orbiting Sun)
+        planet_names = [
+            "Mercury", "Venus", "Earth", "Mars",
+            "Jupiter", "Saturn", "Uranus", "Neptune"
+        ]
         for name in planet_names:
-            data = PLANET_DATA[name]
+            data = config.SolarSystem.PLANET_DATA[name]
             planet_body = CelestialBody(
-                name=name,
-                mass_kg=data['mass_kg'],
-                radius_km=data['radius_km'],
-                display_radius_sim=data['display_radius_sim'],
-                color=data['color'],
-                a_au=data['semi_major_axis_au'],
-                e=data['eccentricity'],
-                i_deg=data['inclination_deg'],
-                omega_deg=data['longitude_of_ascending_node_deg'],
-                w_deg=data['argument_of_perihelion_deg'],
-                m0_deg=data['mean_anomaly_at_epoch_deg'],
-                orbits_around="Sun" # Explicitly orbits Sun
+                name=name, mass_kg=data['mass_kg'], radius_km=data['radius_km'],
+                display_radius_sim=data['display_radius_sim'], color=data['color'],
+                a_au=data['semi_major_axis_au'], e=data['eccentricity'], i_deg=data['inclination_deg'],
+                omega_deg=data['longitude_of_ascending_node_deg'], w_deg=data['argument_of_perihelion_deg'],
+                m0_deg=data['mean_anomaly_at_epoch_deg'], orbits_around="Sun"
             )
-            
             pos_rel_sun_sim, vel_rel_sun_sim_s = self.orbital_mechanics.calculate_initial_state_vector(
                 planet_body, self.sun.mass_kg
             )
-            
-            planet_body.position_sim = np.array(SUN_POSITION_SIM, dtype=np.float64) + pos_rel_sun_sim
-            planet_body.velocity_sim_s = vel_rel_sun_sim_s # Sun's velocity is [0,0]
+            planet_body.position_sim = self.sun.position_sim + pos_rel_sun_sim
+            planet_body.velocity_sim_s = self.sun.velocity_sim_s + vel_rel_sun_sim_s # Add Sun's velocity if Sun moves
 
             self.planets.append(planet_body)
-            celestial_body_references[name] = planet_body # Store reference for moons
+            all_created_bodies.append(planet_body)
+            celestial_body_references[name] = planet_body
             
-            if DEBUG_ORBITAL_MECHANICS:
-                pos_au = planet_body.position_sim / AU_SCALE
-                vel_au_s = planet_body.velocity_sim_s / AU_SCALE
-                print(f"DEBUG: Created {name}: Pos_sim=[{pos_au[0]:.3f}, {pos_au[1]:.3f}] AU, Vel_sim_s=[{vel_au_s[0]:.3f}, {vel_au_s[1]:.3f}] AU/s")
+            if config.Debug.ORBITAL_MECHANICS:
+                pos_au = planet_body.position_sim / config.AU_SCALE
+                vel_au_s = planet_body.velocity_sim_s / config.AU_SCALE
+                print(f"DEBUG: Created {name}: Pos_AU=[{pos_au[0]:.3f}, {pos_au[1]:.3f}], Vel_AU/s=[{vel_au_s[0]:.3f}, {vel_au_s[1]:.3f}]")
 
-        # Create Moons
-        moon_definitions = {
-            "Moon": "Earth",
-            "Io": "Jupiter", "Europa": "Jupiter", "Ganymede": "Jupiter", "Callisto": "Jupiter",
-            "Titan": "Saturn"
-            # Add other moons here if defined in PLANET_DATA
-        }
-
-        for moon_name, primary_name in moon_definitions.items():
-            if primary_name in celestial_body_references and moon_name in PLANET_DATA:
+        # Create Moons (orbiting other planets)
+        # Iterate through PLANET_DATA to find all bodies that orbit something other than None or "Sun"
+        for body_name, body_data in config.SolarSystem.PLANET_DATA.items():
+            primary_name = body_data.get('central_body')
+            if primary_name and primary_name != "Sun" and primary_name in celestial_body_references:
                 primary_body = celestial_body_references[primary_name]
-                moon_data = PLANET_DATA[moon_name]
                 
                 moon_body = CelestialBody(
-                    name=moon_name,
-                    mass_kg=moon_data['mass_kg'],
-                    radius_km=moon_data['radius_km'],
-                    display_radius_sim=moon_data['display_radius_sim'],
-                    color=moon_data['color'],
-                    a_au=moon_data['semi_major_axis_au'], # Relative to its primary
-                    e=moon_data['eccentricity'],
-                    i_deg=moon_data['inclination_deg'],
-                    omega_deg=moon_data['longitude_of_ascending_node_deg'],
-                    w_deg=moon_data['argument_of_perihelion_deg'],
-                    m0_deg=moon_data['mean_anomaly_at_epoch_deg'],
-                    orbits_around=primary_name
+                    name=body_name, mass_kg=body_data['mass_kg'], radius_km=body_data['radius_km'],
+                    display_radius_sim=body_data['display_radius_sim'], color=body_data['color'],
+                    a_au=body_data['semi_major_axis_au'], e=body_data['eccentricity'], i_deg=body_data['inclination_deg'],
+                    omega_deg=body_data['longitude_of_ascending_node_deg'], w_deg=body_data['argument_of_perihelion_deg'],
+                    m0_deg=body_data['mean_anomaly_at_epoch_deg'], orbits_around=primary_name
                 )
-
                 pos_rel_primary_sim, vel_rel_primary_sim_s = self.orbital_mechanics.calculate_initial_state_vector(
-                    moon_body, primary_body.mass_kg # Moon orbits its primary
+                    moon_body, primary_body.mass_kg
                 )
-
-                # Convert Moon's relative state vector to absolute (world) coordinates
                 moon_body.position_sim = primary_body.position_sim + pos_rel_primary_sim
                 moon_body.velocity_sim_s = primary_body.velocity_sim_s + vel_rel_primary_sim_s
                 
-                self.planets.append(moon_body) # Add Moon to the list of bodies to be updated and rendered
-                celestial_body_references[moon_name] = moon_body # Store moon reference
+                self.planets.append(moon_body) # Add to general list of planets/moons
+                all_created_bodies.append(moon_body)
+                celestial_body_references[body_name] = moon_body
                 
-                if DEBUG_ORBITAL_MECHANICS:
-                    pos_au_moon = moon_body.position_sim / AU_SCALE
-                    vel_au_s_moon = moon_body.velocity_sim_s / AU_SCALE
-                    print(f"DEBUG: Created {moon_name} (orbits {primary_name}): Pos_sim=[{pos_au_moon[0]:.4f}, {pos_au_moon[1]:.4f}] AU, Vel_sim_s=[{vel_au_s_moon[0]:.4f}, {vel_au_s_moon[1]:.4f}] AU/s")
-                    rel_pos_au = (moon_body.position_sim - primary_body.position_sim) / AU_SCALE
-                    print(f"DEBUG: {moon_name} initial pos rel {primary_name}: [{rel_pos_au[0]:.4f}, {rel_pos_au[1]:.4f}] AU, dist: {np.linalg.norm(rel_pos_au):.4f} AU (target ~{moon_data['semi_major_axis_au']:.4f} AU)")
+                if config.Debug.ORBITAL_MECHANICS:
+                    pos_au_m = moon_body.position_sim / config.AU_SCALE
+                    vel_au_s_m = moon_body.velocity_sim_s / config.AU_SCALE
+                    print(f"DEBUG: Created {body_name} (orbits {primary_name}): Pos_AU=[{pos_au_m[0]:.4f}, {pos_au_m[1]:.4f}], Vel_AU/s=[{vel_au_s_m[0]:.4f}, {vel_au_s_m[1]:.4f}]")
+                    rel_pos_au_m = (moon_body.position_sim - primary_body.position_sim) / config.AU_SCALE
+                    print(f"    Rel to {primary_name}: Pos_AU=[{rel_pos_au_m[0]:.4f}, {rel_pos_au_m[1]:.4f}], Dist={np.linalg.norm(rel_pos_au_m):.4f} AU (target ~{body_data['semi_major_axis_au']:.4f} AU)")
+
+        # Initial acceleration calculation for Verlet integration
+        # This must be done after all bodies are created and have initial positions/velocities
+        for body_to_update in all_created_bodies:
+            influencing_bodies = [other for other in all_created_bodies if other is not body_to_update]
+            initial_accel_km_s2 = self.orbital_mechanics.calculate_gravitational_acceleration(
+                body_to_update, influencing_bodies
+            )
+            body_to_update.previous_acceleration_sim_s2 = initial_accel_km_s2 * config.KM_SCALE
+            if config.Debug.ORBITAL_MECHANICS and body_to_update.name in ["Earth", "Moon", "Sun"]:
+                 print(f"DEBUG: Initial Accel for {body_to_update.name}: {body_to_update.previous_acceleration_sim_s2}")
+
 
     def step(self, actions: Dict[int, np.ndarray]) -> Tuple[Dict, Dict, Dict, Dict]:
+        # Consolidate all bodies that participate in n-body simulation
+        all_sim_bodies: List[CelestialBody] = []
         if self.sun:
-            self.orbital_mechanics.update_celestial_body_positions(
-                self.planets, 
-                self.sun,
-                SIM_SECONDS_PER_STEP
+            all_sim_bodies.append(self.sun)
+        all_sim_bodies.extend(self.planets) # self.planets now includes planets and moons directly
+
+        if all_sim_bodies: # Check if there are any bodies to update
+            self.orbital_mechanics.propagate_orbits_verlet( # Call the new Verlet method
+                all_sim_bodies,
+                config.Time.SIM_SECONDS_PER_STEP # Use config for timestep
             )
         
-        if DEBUG_ORBITAL_MECHANICS and self.step_count % 100 == 0 and self.sun:
-            # Create a temporary map for debug reference within this scope
-            temp_body_map_for_debug = {p.name: p for p in self.planets}
-            temp_body_map_for_debug[self.sun.name] = self.sun 
+        if config.Debug.ORBITAL_MECHANICS and self.step_count % 100 == 0 and all_sim_bodies:
+            # Debug output for positions and velocities (can be extensive)
+            temp_body_map_for_debug = {b.name: b for b in all_sim_bodies}
 
-            for body in self.planets + [self.sun]: 
-                if body.name == "Sun":
-                    pos_au_sun_debug = body.position_sim / AU_SCALE
-                    print(f"Step {self.step_count}: Sun - Pos: [{pos_au_sun_debug[0]:.3f}, {pos_au_sun_debug[1]:.3f}] AU")
-                    continue
-
-                central_body_for_debug = None
-                if body.orbits_around == "Sun":
-                    central_body_for_debug = self.sun
-                elif body.orbits_around is not None: 
-                    central_body_for_debug = temp_body_map_for_debug.get(body.orbits_around)
+            for body in all_sim_bodies:
+                pos_au_dbg = body.position_sim / config.AU_SCALE # Use global config.AU_SCALE
+                vel_au_s_dbg = body.velocity_sim_s / config.AU_SCALE # Use global config.AU_SCALE
                 
-                if central_body_for_debug:
+                log_msg = (f"Step {self.step_count}: {body.name} - "
+                           f"Pos_AU: [{pos_au_dbg[0]:.3f}, {pos_au_dbg[1]:.3f}], "
+                           f"Vel_AU/s: [{vel_au_s_dbg[0]:.4f}, {vel_au_s_dbg[1]:.4f}]")
+
+                if body.orbits_around and body.orbits_around in temp_body_map_for_debug:
+                    central_body_for_debug = temp_body_map_for_debug[body.orbits_around]
                     distance_vector_sim = body.position_sim - central_body_for_debug.position_sim
-                    distance_au = np.linalg.norm(distance_vector_sim) / AU_SCALE
-                    speed_au_s = np.linalg.norm(body.velocity_sim_s) / AU_SCALE
-                    
-                    pos_au_step_debug = body.position_sim / AU_SCALE
-                    print(f"Step {self.step_count}: {body.name} - "
-                          f"Pos_AU: [{pos_au_step_debug[0]:.3f}, {pos_au_step_debug[1]:.3f}], "
-                          f"Dist_to_{central_body_for_debug.name}: {distance_au:.4f} AU (a={body.a_au:.4f}), "
-                          f"Speed_AU/s: {speed_au_s:.4f}")
+                    distance_au = np.linalg.norm(distance_vector_sim) / config.AU_SCALE # Use global config.AU_SCALE
+                    log_msg += f", Dist_to_{central_body_for_debug.name}: {distance_au:.4f} AU (a={body.a_au:.4f})"
+                print(log_msg)
+
+        # Energy Conservation Check
+        if config.Debug.MONITOR_ENERGY_CONSERVATION and \
+           self.step_count % config.Monitoring.ENERGY_CHECK_INTERVAL_STEPS == 0 and \
+           self.initial_system_energy is not None and all_sim_bodies: # Ensure all_sim_bodies is not empty
+            current_energy = self.orbital_mechanics.calculate_total_system_energy(all_sim_bodies)
+            energy_delta = current_energy - self.initial_system_energy
+            # Use safe_divide for percentage calculation
+            energy_delta_percent = safe_divide(energy_delta * 100.0, self.initial_system_energy, default_on_zero_denom=0.0)
+            print(f"ENERGY CHECK (Step {self.step_count}): Current: {current_energy:.6e}, Initial: {self.initial_system_energy:.6e}, Delta: {energy_delta:.6e} ({energy_delta_percent:.6f}%)")
         
-        observations, rewards, dones, infos = super().step(actions)
+        observations, rewards, dones, infos = super().step(actions) # Handles probe logic
         return observations, rewards, dones, infos
 
     def reset(self) -> Dict[int, np.ndarray]:
@@ -302,12 +336,24 @@ class SolarSystemEnvironment(SpaceEnvironment): # Inherits from the (potentially
                 'color': self.sun.color,
                 'orbit_path': [p.tolist() for p in self.sun.orbit_path] 
             })
-        for planet_body in self.planets: # Includes moons
+        for planet_body in self.planets: # Includes planets and moons
             render_data.append({
                 'name': planet_body.name,
-                'position': planet_body.position_sim.tolist(), 
-                'radius_sim': planet_body.display_radius_sim, 
+                'position': planet_body.position_sim.tolist(),
+                'radius_sim': planet_body.display_radius_sim,
                 'color': planet_body.color,
-                'orbit_path': [p.tolist() for p in planet_body.orbit_path] 
+                'orbit_path': [p.tolist() for p in planet_body.orbit_path]
             })
+        
+        # Add probe data for rendering, including trails
+        for probe_id, probe_data in self.probes.items():
+            if probe_data['alive']:
+                render_data.append({
+                    'name': f"Probe_{probe_id}",
+                    'type': 'probe', # Differentiate from celestial bodies
+                    'position': probe_data['position'].tolist(),
+                    'radius_sim': config.Visualization.PROBE_SIZE_PX / 2, # Example radius for rendering
+                    'color': (255, 0, 255), # Example probe color
+                    'trail': [p.tolist() for p in probe_data['trail']]
+                })
         return render_data
