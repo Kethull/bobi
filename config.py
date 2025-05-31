@@ -49,6 +49,10 @@ class SimulationConfig:
         >>> print(f"Probe Max Energy: {config.Probe.MAX_ENERGY}")
     """
 
+    AU_KM = 149597870.7  # Kilometers per Astronomical Unit
+    GRAVITATIONAL_CONSTANT_KM3_KG_S2 = 6.67430e-20  # G in km^3 kg^-1 s^-2
+    KM_SCALE = AU_SCALE / AU_KM  # Sim units per km
+    AU_SCALE = 10000.0  # Sim units per AU
     # --- World Configuration ---
     class World:
         """Configuration for the simulation world's physical properties.
@@ -259,9 +263,10 @@ class SimulationConfig:
         
         CRITICAL_ENERGY_THRESHOLD_PERCENT = 0.10
         STAY_ALIVE_REWARD_BONUS_PER_STEP = 0.02
+        LOW_ENERGY_PENALTY_LEVEL_2_THRESHOLD_PERCENT = 0.15  # Now between Critical and Level 1
+        LOW_ENERGY_PENALTY_LEVEL_2_FACTOR = 0.3
         LOW_ENERGY_PENALTY_LEVEL_1_THRESHOLD_PERCENT = 0.25
         LOW_ENERGY_PENALTY_LEVEL_1_FACTOR = 0.1
-        LOW_ENERGY_PENALTY_LEVEL_2_THRESHOLD_PERCENT = 0.10
         LOW_ENERGY_PENALTY_LEVEL_2_FACTOR = 0.3
 
         EPISODE_LENGTH_STEPS = 50000
@@ -395,7 +400,7 @@ class SimulationConfig:
             SCREEN_WIDTH_PX (int): Width of the display window in pixels.
             SCREEN_HEIGHT_PX (int): Height of the display window in pixels.
             FPS (int): Target frames per second for rendering.
-            PROBE_SIZE_PX (int): Visual size (diameter) of probes in pixels.
+            PROBE_SIZE_SIM (float): Visual size (diameter) of probes in simulation units. # Simulation units - about 1/6 of Earth's display radius for visibility
             SHOW_SIMPLE_PROBE_INFO (bool): If True, display basic info text next to probes.
             SHOW_SIMPLE_RESOURCE_INFO (bool): If True, display basic info for resources.
             ORGANIC_SHIP_ENABLED (bool): Toggles the organic ship visual theme.
@@ -414,7 +419,7 @@ class SimulationConfig:
         SCREEN_WIDTH_PX = 1400
         SCREEN_HEIGHT_PX = 900
         FPS = 60
-        PROBE_SIZE_PX = 12
+        PROBE_SIZE_SIM = 8.0  # Simulation units - about 1/6 of Earth's display radius for visibility
         SHOW_SIMPLE_PROBE_INFO = True
         SHOW_SIMPLE_RESOURCE_INFO = True
 

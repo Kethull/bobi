@@ -13,6 +13,8 @@ from particle_system import AdvancedParticleSystem
 from visual_effects import VisualEffects, StarField # Added imports
 from advanced_ui import ModernUI # Added import
 
+from typing import Tuple
+
 class Visualization:
     """Handles all aspects of rendering the simulation state using Pygame.
 
@@ -229,8 +231,12 @@ class Visualization:
         if not self.visualization_enabled or self.screen is None:
             return (0, 0) # Cannot perform conversion
         try:
+            # Ensure world_pos is a NumPy array
+            if not isinstance(world_pos, np.ndarray):
+                world_pos = np.array(world_pos, dtype=np.float64)
+
             # Validate inputs and attributes
-            if not isinstance(world_pos, np.ndarray) or world_pos.shape != (2,):
+            if world_pos.shape != (2,): # Already checked it's an ndarray
                 raise TypeError(f"world_pos must be a 2D NumPy array. Got: {world_pos}")
             if not (isinstance(self.camera_offset, np.ndarray) and self.camera_offset.shape == (2,)):
                  raise AttributeError("camera_offset is not a valid 2D NumPy array.")
@@ -628,7 +634,10 @@ class Visualization:
                     except Exception as e_ship_render:
                         logging.error(f"Error rendering organic ship for probe {probe_id}: {e_ship_render}", exc_info=True)
                 else: # Fallback simple probe drawing if organic is off or renderer fails
-                    pygame.draw.circle(self.screen, self.colors.get('probe_base', (100,150,255)), screen_pos_probe, int(config.Visualization.PROBE_SIZE_PX / 2 * self.zoom_level))
+                    probe_radius_sim = config.Visualization.PROBE_SIZE_SIM / 2
+                    avg_scale = (self.scale_x + self.scale_y) / 2.0
+                    screen_radius = max(1, int(probe_radius_sim * avg_scale * self.zoom_level))
+                    pygame.draw.circle(self.screen, self.colors.get('probe_base', (100,150,255)), screen_pos_probe, screen_radius)
 
                 # Update and draw trail
                 self._update_smooth_trail(probe_id, screen_pos_probe, probe_data_map.get('velocity', np.array([0.0,0.0])))
@@ -811,7 +820,6 @@ class Visualization:
                 selected_probe_id=self.selected_probe_id_ui,
                 selected_probe_details=selected_probe_details_data, # Can be None
                 camera_offset=self.camera_offset,
-                zoom_level=self.zoom_level, # Pass zoom level to UI
                 fps=self.clock.get_fps() # get_fps() is safe even if clock just started
             )
             self.modern_ui.draw_ui(self.screen) # ModernUI handles its own drawing logic

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Tuple, Optional, List
 import pygame
 import numpy as np
 import math

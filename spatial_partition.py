@@ -1,6 +1,11 @@
+from __future__ import annotations
+from __future__ import annotations
+from __future__ import annotations
 import numpy as np
 from config import config
-from particle_system import Particle # Assuming Particle class is in particle_system
+from typing import List
+from typing import List
+# Removed circular import - Particle type will be referenced via string annotations
 
 class Rectangle:
     def __init__(self, x, y, w, h):
@@ -9,7 +14,7 @@ class Rectangle:
         self.w = w  # Half-width
         self.h = h  # Half-height
 
-    def contains(self, particle: Particle) -> bool:
+    def contains(self, particle: "Particle") -> bool:
         """Check if a particle (based on its position) is within this rectangle."""
         px, py = particle.pos
         return (self.x - self.w <= px < self.x + self.w and

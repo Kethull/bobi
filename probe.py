@@ -30,9 +30,9 @@ class ProbeAgent:
             self.model = PPO(
                 "MlpPolicy",
                 self.vec_env,
-                learning_rate=LEARNING_RATE,
+                learning_rate=config.RL.LEARNING_RATE,
                 n_steps=2048,
-                batch_size=BATCH_SIZE,
+                batch_size=config.RL.BATCH_SIZE,
                 ent_coef=0.01,
                 verbose=1, # Changed to 1 for more console output
                 device='cpu',  # Force CPU

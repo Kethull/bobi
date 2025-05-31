@@ -29,9 +29,9 @@ class OrganicShipRenderer:
         }
         
         # Ship proportions (scaled to SPACESHIP_SIZE)
-        self.ship_length = config.Visualization.PROBE_SIZE_PX * 2.5   # Much more elongated
-        self.ship_width = config.Visualization.PROBE_SIZE_PX * 0.8
-        self.engine_length = config.Visualization.PROBE_SIZE_PX * 0.6
+        self.ship_length = config.Visualization.PROBE_SIZE_SIM * 2.5   # Much more elongated
+        self.ship_width = config.Visualization.PROBE_SIZE_SIM * 0.8
+        self.engine_length = config.Visualization.PROBE_SIZE_SIM * 0.6
         
     def draw_organic_ship(self, surface, probe, screen_pos, scale=1.0):
         """Draw elegant organic spacecraft"""

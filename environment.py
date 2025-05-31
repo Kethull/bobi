@@ -969,7 +969,7 @@ class SolarSystemEnvironment(SpaceEnvironment):
                         raise ConfigurationError("config.Time.SIM_SECONDS_PER_STEP must be a positive number.")
                     
                     self.orbital_mechanics.propagate_orbits_verlet(
-                        bodies=all_celestial_entities,
+                        all_celestial_entities,
                         dt_seconds=sim_time_per_step
                     )
                 except PhysicsError as e_phys_propagate:

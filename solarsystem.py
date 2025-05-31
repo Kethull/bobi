@@ -1,4 +1,5 @@
 # solarsystem.py
+from typing import Optional
 import numpy as np
 import math
 from dataclasses import dataclass, field

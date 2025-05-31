@@ -233,9 +233,9 @@ class BobiverseSimulation:
                         try:
                             self.visualization.render(self.environment, self.probe_agents)
                         except Exception as e_render:
-                            logging.error(f"Error during visualization rendering: {e_render}", exc_info=True)
-                            render = False # Disable rendering for the rest of the episode
-                            logging.warning("Disabling rendering for the remainder of the episode due to an error.")
+                            logging.error(f"Critical error during visualization rendering: {e_render}", exc_info=True)
+                            logging.critical("Terminating simulation due to visualization error.")
+                            self.running = False # Stop the simulation
                         if render: # Check again in case it was just disabled
                             time.sleep(1.0 / config.Visualization.FPS if config.Visualization.FPS > 0 else 0.01)
                     
